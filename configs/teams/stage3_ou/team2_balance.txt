@@ -1,0 +1,59 @@
+Garganacl @ Leftovers
+Ability: Purifying Salt
+Tera Type: Fairy
+EVs: 252 HP / 4 Def / 252 SpD
+Careful Nature
+- Salt Cure
+- Recover
+- Protect
+- Earthquake
+
+Iron Valiant @ Booster Energy
+Ability: Quark Drive
+Tera Type: Fairy
+EVs: 4 Atk / 252 SpA / 252 Spe
+Naive Nature
+- Moonblast
+- Shadow Ball
+- Close Combat
+- Thunderbolt
+
+Skarmory @ Rocky Helmet
+Ability: Sturdy
+Tera Type: Steel
+EVs: 252 HP / 252 Def / 4 SpD
+Bold Nature
+- Spikes
+- Body Press
+- Roost
+- Whirlwind
+
+Cinderace @ Heavy-Duty Boots
+Ability: Libero
+Tera Type: Grass
+EVs: 252 Atk / 4 SpD / 252 Spe
+Jolly Nature
+- Pyro Ball
+- U-turn
+- Sucker Punch
+- Court Change
+
+Slowking-Galar @ Heavy-Duty Boots
+Ability: Regenerator
+Tera Type: Fairy
+EVs: 252 HP / 252 SpD / 4 SpA
+Calm Nature
+- Future Sight
+- Sludge Bomb
+- Slack Off
+- Chilly Reception
+
+Kingambit @ Leftovers
+Ability: Supreme Overlord
+Tera Type: Dark
+EVs: 252 HP / 252 Atk / 4 SpD
+Adamant Nature
+- Swords Dance
+- Kowtow Cleave
+- Sucker Punch
+- Iron Head

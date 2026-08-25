@@ -1,0 +1,6 @@
+poke-env>=0.15,<0.16
+gymnasium>=0.29
+torch>=2.0
+numpy>=1.24
+pyyaml>=6.0
+pytest>=8.0
