@@ -123,14 +123,29 @@ class ShowdownBattleEnv(gym.Env):
         self.n_total_actions = 0
 
     def reset(self, *, seed: Optional[int] = None, options: Optional[dict] = None):
-        return self._wrapped.reset(seed=seed, options=options)
+        # poke-env's PokeEnv.reset() (SingleAgentWrapper's underlying
+        # two-agent env) always wraps the per-agent observation as
+        # {"observation": ..., "action_mask": ...} -- built-in support
+        # for action masking that we don't use here (we compute our own
+        # mask separately via get_action_mask(), reading straight from
+        # the battle object). Unwrap to the flat array the rest of this
+        # codebase (Trainer, ReplayBuffer, epsilon_greedy_action) expects.
+        obs, info = self._wrapped.reset(seed=seed, options=options)
+        return obs["observation"], info
 
     def step(self, action: int):
         self.n_total_actions += 1
         mask = self.get_action_mask()
         safe_action, was_illegal = sanitize_action(int(action), mask)
 
-        obs, reward, terminated, truncated, info = self._wrapped.step(safe_action)
+        # poke-env's own SinglesEnv.action_to_order (called internally by
+        # SingleAgentWrapper.step -> PokeEnv.step) calls `.item()` on the
+        # action, i.e. it expects a numpy scalar/array, not a plain
+        # Python int -- passing `int` raises AttributeError deep inside
+        # poke-env. sanitize_action legitimately returns a plain int (it
+        # has no reason to know about this poke-env implementation
+        # detail), so convert at this boundary instead.
+        obs, reward, terminated, truncated, info = self._wrapped.step(np.int64(safe_action))
 
         if was_illegal:
             self.n_invalid_actions += 1
@@ -144,7 +159,8 @@ class ShowdownBattleEnv(gym.Env):
                 mask,
             )
 
-        return obs, reward, terminated, truncated, info
+        # Same unwrapping as reset() -- see the comment there.
+        return obs["observation"], reward, terminated, truncated, info
 
     def get_action_mask(self):
         battle = self._underlying.battle1
