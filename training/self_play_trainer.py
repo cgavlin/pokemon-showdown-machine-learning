@@ -33,6 +33,7 @@ from poke_env.ps_client import AccountConfiguration
 
 from agents.policy import DuelingQNetwork, epsilon_greedy_action
 from agents.value_function import ReplayBuffer, Transition
+from environment.actions import as_poke_env_action
 from environment.battle_env import LOCAL_SERVER_CONFIGURATION, EncodedSinglesEnv
 from environment.rewards import RewardConfig
 from environment.state import observation_size
@@ -53,6 +54,7 @@ class SelfPlayTrainer:
         player2_username: str = "Player2 B",
         team: str | None = None,
         env=None,
+        init_checkpoint: str | Path | None = None,
     ):
         self.cfg = training_config
         self.reward_config = reward_config
@@ -62,6 +64,19 @@ class SelfPlayTrainer:
         self.run_dir.mkdir(parents=True, exist_ok=True)
         self.player1_username = player1_username
         self.player2_username = player2_username
+        self.init_checkpoint = init_checkpoint
+
+        # Fail fast on a bad checkpoint path -- before opening any real
+        # connection below -- rather than deep inside torch.load after
+        # a websocket has already been opened and both accounts logged
+        # in. A typo'd path is a common mistake (e.g. copying a run
+        # directory but not the checkpoint filename inside it).
+        if init_checkpoint is not None and not Path(init_checkpoint).is_file():
+            raise FileNotFoundError(
+                f"init_checkpoint not found: {init_checkpoint}\n"
+                "Check the path and that training actually reached a "
+                "checkpoint-saving step."
+            )
 
         # Two explicit, distinct Player profiles -- avoids the
         # username-collision login bug that occurs when poke-env has to
@@ -83,6 +98,19 @@ class SelfPlayTrainer:
         self.n_actions = self.env.action_spaces[self.env.possible_agents[0]].n
 
         self.q_network = DuelingQNetwork(obs_size, self.n_actions).to(self.device)
+        if init_checkpoint is not None:
+            # Warm-start from an existing checkpoint (e.g. one produced
+            # by Trainer, this same class, or PooledSelfPlayTrainer --
+            # they all save/load the same {"q_network": state_dict, ...}
+            # format) instead of always beginning from random weights.
+            state_dict = torch.load(init_checkpoint, map_location=self.device)
+            if "q_network" not in state_dict:
+                raise ValueError(
+                    f"{init_checkpoint} loaded but doesn't look like a checkpoint saved "
+                    "by this project (missing the 'q_network' key)."
+                )
+            self.q_network.load_state_dict(state_dict["q_network"])
+            logger.info("Warm-started self-play network from %s", init_checkpoint)
         self.target_network = copy.deepcopy(self.q_network).to(self.device)
         self.target_network.eval()
         self.optimizer = torch.optim.Adam(self.q_network.parameters(), lr=self.cfg.learning_rate)
@@ -106,6 +134,7 @@ class SelfPlayTrainer:
             "battle_format": self.battle_format,
             "player1_username": self.player1_username,
             "player2_username": self.player2_username,
+            "init_checkpoint": str(self.init_checkpoint) if self.init_checkpoint else None,
             "seed": self.cfg.seed,
             "created_at": time.time(),
         }
@@ -144,9 +173,11 @@ class SelfPlayTrainer:
         for agent_id in agent_ids:
             obs = observations[agent_id]["observation"]
             mask = observations[agent_id]["action_mask"]
-            actions[agent_id] = epsilon_greedy_action(
-                self.q_network, obs, mask, epsilon, self.device, self.rng
-            )
+            action = epsilon_greedy_action(self.q_network, obs, mask, epsilon, self.device, self.rng)
+            # poke-env's own PokeEnv.step() -> SinglesEnv.action_to_order
+            # requires a numpy scalar action -- see
+            # environment/actions.py's as_poke_env_action for why.
+            actions[agent_id] = as_poke_env_action(action)
         return actions
 
     def train(self) -> Path:
@@ -182,12 +213,25 @@ class SelfPlayTrainer:
 
             if not self.env.agents:  # poke-env clears .agents once the battle finishes
                 episode_count += 1
+                # battle1/battle2 still hold the just-finished battle at
+                # this point (before reset() reassigns them) -- each is
+                # that player's own perspective on the SAME battle, so
+                # exactly one of .won is True and the other's .lost is
+                # True. Read both so callers (e.g.
+                # scripts/two_players_battle.py's --learn summary) can
+                # report a real win rate instead of only reward.
+                battle1 = getattr(self.env, "battle1", None)
+                battle2 = getattr(self.env, "battle2", None)
+                player1_won = bool(battle1.won) if battle1 is not None else None
+                player2_won = bool(battle2.won) if battle2 is not None else None
                 self._log_metrics(
                     step=step,
                     event="episode_end",
                     episode=episode_count,
                     player1_reward=episode_reward.get(agent_ids[0], 0.0),
                     player2_reward=episode_reward.get(agent_ids[1], 0.0),
+                    player1_won=player1_won,
+                    player2_won=player2_won,
                     epsilon=epsilon,
                 )
                 observations, infos = self.env.reset()
