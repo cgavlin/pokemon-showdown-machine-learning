@@ -1,8 +1,7 @@
 """
 DQN trainer for the battle agent.
 
-Implements CLAUDE.md's "Experiment Tracking" requirement: every run
-records model version, environment version, reward configuration,
+Every run records model version, environment version, reward configuration,
 training configuration, opponent pool, team pool, episode/step counts,
 evaluation results, seeds, checkpoint locations, and hyperparameters
 into a single run directory.

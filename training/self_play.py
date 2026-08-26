@@ -1,5 +1,5 @@
 """
-Self-play opponent pool, per CLAUDE.md's "Self-Play" section:
+Self-play opponent pool:
   - save successful versions of the agent
   - add previous versions to an opponent pool
   - sample opponents from that pool during training

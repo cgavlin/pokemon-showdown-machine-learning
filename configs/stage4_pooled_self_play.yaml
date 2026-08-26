@@ -1,7 +1,7 @@
 # Stage 4 (competitive play) experiment configuration: pooled self-play.
-# Per CLAUDE.md: "When changing the reward function, environment rules,
+# When changing the reward function, environment rules,
 # observation space, or action space, create a distinct experiment
-# version." Copy this file rather than editing in place once a run has
+# version. Copy this file rather than editing in place once a run has
 # been used for real results.
 #
 # Usage:
@@ -11,8 +11,7 @@
 # instead of stage1) and self_play.enabled (true instead of false).
 # Everything else -- reward shaping, training hyperparameters -- is
 # unchanged from the Stage 1 baseline; tune these once you have actual
-# Stage 1-3 results to compare against, per CLAUDE.md's "Compare
-# results against the previous baseline" workflow step.
+# Stage 1-3 results to compare against.
 
 experiment_name: "stage4_competitive_play_pooled_self_play"
 curriculum_stage: "stage4_competitive_play"

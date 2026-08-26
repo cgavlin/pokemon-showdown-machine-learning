@@ -5,7 +5,7 @@ from training.curriculum import CURRICULUM, get_stage
 from training.self_play import SelfPlayPool
 
 
-def test_curriculum_has_five_stages_matching_claude_md():
+def test_curriculum_has_five_stages():
     names = [s.name for s in CURRICULUM]
     assert names == [
         "stage1_basic_mechanics",

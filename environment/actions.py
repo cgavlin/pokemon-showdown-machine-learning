@@ -1,9 +1,6 @@
 """
 Action space for the Pokemon battle RL environment.
 
-Per CLAUDE.md: "The environment should validate actions before applying
-them. Invalid actions should not silently become arbitrary legal actions."
-
 poke-env's `SinglesEnv` already encodes actions as a flat Discrete space
 (0..N-1) covering moves 1-4 (+ optional terastallize/mega/dynamax
 variants) and switches 1-6, and raises/handles illegal actions internally
@@ -18,6 +15,8 @@ via `action_to_order`. This module wraps that behavior with:
 from __future__ import annotations
 
 from dataclasses import dataclass
+
+import numpy as np
 
 # Invalid-action penalty applied by ShowdownBattleEnv when the policy
 # selects an action index that is not currently legal. This should be
@@ -70,3 +69,7 @@ def sanitize_action(action_index: int, action_mask) -> tuple[int, bool]:
     if is_action_legal(action_index, action_mask):
         return action_index, False
     return 0, True
+
+
+def as_poke_env_action(action: int) -> np.int64:
+    return np.int64(action)

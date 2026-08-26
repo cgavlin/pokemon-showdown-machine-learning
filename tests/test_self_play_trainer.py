@@ -1,9 +1,8 @@
 """
 Tests for training/self_play_trainer.py's training loop.
 
-Per CLAUDE.md's testing requirements, this exercises the loop's
-bookkeeping (replay buffer growth from BOTH players, episode counting,
-checkpointing, metrics logging) without requiring a live Showdown
+This exercises the loop's bookkeeping (replay buffer growth from BOTH players, 
+episode counting, checkpointing, metrics logging) without requiring a live Showdown
 server: SelfPlayTrainer.env is swapped for a MockParallelEnv that
 mimics poke-env's two-agent parallel step/reset contract.
 """

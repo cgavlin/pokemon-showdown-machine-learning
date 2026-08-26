@@ -1,8 +1,7 @@
 """
 Pooled self-play trainer.
 
-Wires training/self_play.py's SelfPlayPool into actual training, per
-CLAUDE.md's "Self-Play" section:
+Wires training/self_play.py's SelfPlayPool into actual training:
   - save successful versions of the agent
   - add previous versions to an opponent pool
   - sample opponents from that pool during training
@@ -41,8 +40,7 @@ from the pool, and not affected by self-play at all), logged as a
 separate "eval_vs_fixed_opponent" metric event. That's the number to
 actually watch for whether the agent is improving over time.
 
-Always connects to the LOCAL server, never the public ladder, per
-CLAUDE.md's "Default to local simulation" rule.
+Always connects to the LOCAL server, never the public ladder.
 """
 
 from __future__ import annotations

@@ -1,7 +1,7 @@
 """
-Evaluation metrics, per CLAUDE.md's "Evaluation" section: win/loss/draw
-rate, average reward, average damage dealt/received, Pokemon fainted
-per battle (both sides), switch frequency, move effectiveness, and
+Evaluation metrics: win/loss/draw rate, average reward,
+average damage dealt/received, Pokemon fainted per battle (both sides), 
+switch frequency, move effectiveness, and
 (via benchmarks.py) performance against held-out opponents/teams.
 """
 

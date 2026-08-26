@@ -11,12 +11,10 @@ share the SAME Dueling DQN weights (mirror self-play): every battle
 produces two independent trajectories, one from each player's point of
 view, and both get pushed into the replay buffer and used to update the
 shared network. This roughly doubles the experience gathered per
-battle and is the standard bootstrap for self-play (see CLAUDE.md's
-"Self-Play" section) before layering in a pool of past checkpoints
-(training/self_play.py's SelfPlayPool) for opponent diversity.
+battle and is the standard bootstrap for self-play before layering in a pool 
+of past checkpoints (training/self_play.py's SelfPlayPool) for opponent diversity.
 
-Both players always connect to the LOCAL server -- never the public
-ladder -- per CLAUDE.md's "Default to local simulation" rule.
+Both players always connect to the LOCAL server -- never the public ladder.
 """
 
 from __future__ import annotations

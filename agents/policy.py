@@ -1,8 +1,7 @@
 """
 Policy network for the battle agent.
 
-Starts simple on purpose (CLAUDE.md: "prefer simple, modular
-implementations"): a feed-forward Dueling DQN over the fixed-size
+Starts simple on purpose: a feed-forward Dueling DQN over the fixed-size
 observation vector produced by environment/state.py, with masked
 action selection so illegal actions are never chosen at inference time
 even though the env would also catch and penalize them.

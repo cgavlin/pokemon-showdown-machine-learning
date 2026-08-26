@@ -1,7 +1,7 @@
 """
 State encoding for the Pokemon battle RL environment.
 
-Design principle (see CLAUDE.md "RL Environment"):
+Design principle:
   - Known information: directly observable by the agent (own team fully,
     opponent's revealed Pokemon/moves/items/abilities only).
   - Unknown information: anything poke-env has not revealed through the

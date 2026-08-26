@@ -1,7 +1,7 @@
 """
 Reward function for the Pokemon battle RL environment.
 
-Implements the structure specified in CLAUDE.md:
+Implements this structure:
 
     total_reward =
         tactical_rewards
@@ -11,12 +11,12 @@ Implements the structure specified in CLAUDE.md:
         - avoidable_loss_penalties
         - battle_loss_penalty
 
-All values below are *starting points* (as CLAUDE.md explicitly notes)
+All values below are *starting points*
 meant to be tuned through experiments, not fixed requirements. They are
 kept in one dataclass so a whole reward configuration can be versioned
-and logged per CLAUDE.md's "Experiment Tracking" requirements.
+and logged.
 
-Guardrails encoded here, per CLAUDE.md "Reward Design Principles":
+Guardrails encoded here:
   - win_reward is an order of magnitude larger than any single tactical
     reward, so intermediate farming can never out-value winning.
   - super-effective / knockout rewards are capped relative to win_reward

@@ -7,10 +7,8 @@ for free -- poke-env's Showdown server generates a fresh random team
 every battle. Non-random formats like gen9ou (Stage 3+) don't: without
 an explicit team, a Player either can't battle at all, or (if given a
 single fixed team string) always uses the exact same team every
-battle, which defeats CLAUDE.md's "varied teams and battle scenarios"
-requirement once training moves past Stage 2. TeamPool fixes that by
-holding several teams and picking one at random per battle, the same
-way a human laddering with a small roster of prepared teams would.
+battle,. TeamPool fixes that by holding several teams and picking 
+one at random per battle, the same way a human laddering with a small roster of prepared teams would.
 """
 
 from __future__ import annotations
@@ -56,7 +54,7 @@ class TeamPool(Teambuilder):
         files are the natural way to keep a pool under version control
         -- e.g. `configs/teams/stage3_ou/*.txt` -- separately from
         training code, and to swap in a genuinely held-out set of teams
-        for evaluation (CLAUDE.md's "held-out ... teams" requirement).
+        for evaluation.
         """
         team_dir = Path(team_dir)
         paths = sorted(team_dir.glob(pattern))

@@ -2,10 +2,8 @@
 Automatic curriculum advancement.
 
 Wires curriculum.py's per-stage min_eval_win_rate_to_advance gates
-into an actual runnable process, per CLAUDE.md's "Curriculum Learning"
-section: train a stage to completion, evaluate the result against a
-held-out opponent (per CLAUDE.md's held-out evaluation requirement --
-always a DIFFERENT opponent type than the one trained against, so
+into an actual runnable process: train a stage to completion, evaluate the result against a
+held-out opponent always a DIFFERENT opponent type than the one trained against, so
 passing the gate reflects generalization rather than memorizing one
 scripted bot's quirks), and only proceed to the next stage if that
 gate is met. Before this existed, comparing a trained checkpoint
@@ -39,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 LIVE_BATTLE_STAGE_NAME = "stage5_human_opponents"
 
-# Stages where CLAUDE.md's curriculum explicitly calls for self-play.
+# Stages where curriculum explicitly calls for self-play.
 # CurriculumRunner forces self_play.enabled to match this set for every
 # stage it trains, REGARDLESS of what the base config's self_play block
 # says -- the base config's self_play sub-fields (mode, pool_dir,
@@ -49,8 +47,7 @@ SELF_PLAY_STAGE_NAMES = {"stage4_competitive_play"}
 
 # A stage's held-out eval opponent must differ from the opponent type
 # it trained against, so passing the gate reflects generalization
-# instead of memorizing one scripted bot's quirks (CLAUDE.md's
-# held-out evaluation requirement). Fixed mapping to a different,
+# instead of memorizing one scripted bot's quirks. Fixed mapping to a different,
 # reasonably-strong opponent type per training opponent.
 _HELD_OUT_OPPONENT_FOR = {
     "random": "heuristic",

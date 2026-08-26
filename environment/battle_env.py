@@ -2,8 +2,7 @@
 ShowdownBattleEnv: the RL-facing environment for this project.
 
 This wraps poke-env's `SinglesEnv` (which itself talks to a Pokemon
-Showdown server -- local by default, per CLAUDE.md's "train locally
-first" rule) and layers on:
+Showdown server -- local by default, never the public ladder) and adds:
   - our own state encoding (environment/state.py)
   - our own action validation + penalty handling (environment/actions.py)
   - our own reward shaping (environment/rewards.py)
@@ -12,10 +11,6 @@ so the rest of the codebase (agents/training/evaluation) never has to
 know it's ultimately built on poke-env, and could be swapped onto a
 different underlying battle simulator later without changing callers.
 
-CLAUDE.md requires a local, deterministic, testable environment before
-any live-battle connection. This module defaults to a local Showdown
-server address (ws://localhost:8000) and never connects to the public
-ladder -- see showdown/integration.py for the explicitly-gated live path.
 """
 
 from __future__ import annotations
@@ -90,7 +85,7 @@ class ShowdownBattleEnv(gym.Env):
     never silently remapped into an arbitrary legal action without
     consequence -- they incur INVALID_ACTION_PENALTY on top of whatever
     (well-defined) fallback action actually gets sent, and the event is
-    logged so policy bugs are detectable (per CLAUDE.md "Action Space").
+    logged so policy bugs are detectable.
     """
 
     metadata = {"render_modes": []}
@@ -188,8 +183,7 @@ def make_env(
     """
     Factory used by training/evaluation scripts. `local=True` (the
     default and the only mode used anywhere except showdown/integration.py)
-    always points at a locally-run Showdown server, per CLAUDE.md's
-    "Default to local simulation" safety rule.
+    always points at a locally-run Showdown server
     """
     server_config = LOCAL_SERVER_CONFIGURATION if local else None
     return ShowdownBattleEnv(

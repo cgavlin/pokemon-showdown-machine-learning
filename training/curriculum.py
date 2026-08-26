@@ -1,6 +1,5 @@
 """
-Curriculum learning stages, matching CLAUDE.md's "Curriculum Learning"
-section (Stage 1: Basic Mechanics ... Stage 5: Human Opponents).
+Curriculum learning stages: (Stage 1: Basic Mechanics ... Stage 5: Human Opponents).
 
 Each CurriculumStage describes what opponent pool / battle format /
 team pool to train against and a rough gate (min win rate over N

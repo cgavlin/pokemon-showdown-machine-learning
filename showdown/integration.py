@@ -2,7 +2,7 @@
 Live Pokemon Showdown integration -- the ONLY place in this codebase
 that is allowed to connect to a non-local server or the public ladder.
 
-Per CLAUDE.md's "Safety and Operational Rules":
+Safety and Operational Rules:
   - Never allow an experimental model to automatically enter live
     battles without an explicit evaluation gate.
   - Keep live-battle credentials outside source code and version control.
@@ -54,9 +54,7 @@ class LiveBattleConfig:
     n_battles: int = 1
 
     # Credentials must come from the environment, never from source
-    # control (CLAUDE.md: "Keep live-battle credentials and
-    # authentication information outside source code and version
-    # control").
+    # control.
     username_env_var: str = "SHOWDOWN_USERNAME"
     password_env_var: str = "SHOWDOWN_PASSWORD"
 
@@ -87,9 +85,7 @@ def connect_for_live_battles(
     if not cfg.enabled:
         raise LiveBattleNotEnabledError(
             "LiveBattleConfig.enabled is False. Live battles are disabled "
-            "by default per CLAUDE.md's safety rules. Set enabled=True "
-            "explicitly (in a one-off script, not a checked-in default) "
-            "to proceed."
+            "by default."
         )
 
     if require_manual_confirmation:

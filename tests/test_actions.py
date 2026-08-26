@@ -35,7 +35,7 @@ def test_sanitize_action_passes_through_legal_action():
 
 def test_sanitize_action_never_silently_substitutes_without_flagging():
     """
-    Core safety property from CLAUDE.md: an illegal action must never
+    Core safety property: an illegal action must never
     look identical to a legal one downstream -- the caller MUST be able
     to detect it happened (via the returned flag) even though a
     well-defined fallback action is produced so the battle can continue.

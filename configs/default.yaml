@@ -1,7 +1,7 @@
 # Default experiment configuration.
-# Per CLAUDE.md: "When changing the reward function, environment rules,
+# When changing the reward function, environment rules,
 # observation space, or action space, create a distinct experiment
-# version." Copy this file (e.g. configs/exp_002_stage2.yaml) rather
+# version. Copy this file (e.g. configs/exp_002_stage2.yaml) rather
 # than editing in place once a run has been used for real results.
 
 experiment_name: "stage1_basic_mechanics_baseline"
@@ -61,9 +61,7 @@ self_play:
                            # scripts/pooled_self_play_train.py also exist as
                            # direct, config-independent entry points.
   mode: "pooled"           # "pooled" (train against a rotating pool of the
-                           # learner's own past checkpoints -- CLAUDE.md's
-                           # actual Stage 4 design) or "mirror" (the network
-                           # plays literally itself every battle)
+                           # learner's own past checkpoints
   pool_dir: null           # null (default): pool lives inside this run's own
                            # directory, isolated per run. Set an explicit path
                            # (e.g. "runs/self_play_pool") to share/persist a

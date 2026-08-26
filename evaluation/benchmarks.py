@@ -1,8 +1,8 @@
 """
-Held-out evaluation, per CLAUDE.md: "Maintain held-out opponents, teams,
+Held-out evaluation: Maintain held-out opponents, teams,
 and battle scenarios so improvements can be measured without
-overfitting" and "Evaluation should use battles that are not directly
-included in the training set."
+overfitting and evaluation should use battles that are not directly
+included in the training set.
 
 This module never trains -- it only runs an already-trained (or
 random-policy, for baseline) agent against opponents/teams that the

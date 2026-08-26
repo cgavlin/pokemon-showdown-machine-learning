@@ -1,8 +1,7 @@
 """
 Experience replay buffer.
 
-Named value_function.py to match the CLAUDE.md suggested architecture
-(agents/{policy,value_function,inference}); in this Dueling-DQN setup
+In this Dueling-DQN setup
 the "value function" concern is the Q-value target/replay machinery
 that the policy network is trained against.
 """
