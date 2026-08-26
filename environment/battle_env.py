@@ -25,7 +25,7 @@ from poke_env.environment import SingleAgentWrapper, SinglesEnv
 from poke_env.player import Player, RandomPlayer
 from poke_env.ps_client import AccountConfiguration, ServerConfiguration
 
-from environment.actions import INVALID_ACTION_PENALTY, sanitize_action
+from environment.actions import INVALID_ACTION_PENALTY, as_poke_env_action, sanitize_action
 from environment.rewards import BattleRewardState, RewardConfig, compute_reward
 from environment.state import encode_battle, observation_size
 
@@ -56,7 +56,7 @@ class EncodedSinglesEnv(SinglesEnv):
     def __init__(self, reward_config: RewardConfig, **kwargs):
         super().__init__(**kwargs)
         self._reward_config = reward_config
-        self._reward_states: dict[str, BattleRewardState] = {}
+        self._reward_states: dict[int, BattleRewardState] = {}
         self.observation_spaces = {
             agent: Box(low=-10.0, high=10.0, shape=(observation_size(),), dtype=np.float32)
             for agent in self.possible_agents
@@ -66,7 +66,20 @@ class EncodedSinglesEnv(SinglesEnv):
         return encode_battle(battle)
 
     def calc_reward(self, battle) -> float:
-        key = battle.battle_tag
+        # battle.battle_tag is the SAME string for both sides of a battle
+        # (self.battle1 and self.battle2 are two different Battle objects
+        # -- agent1's and agent2's own perspectives on one real battle --
+        # but poke-env gives them identical tags). calc_reward() is
+        # called once per agent per step, so keying incremental reward
+        # state by battle_tag alone means agent1's and agent2's calls
+        # silently overwrite the SAME BattleRewardState entry every
+        # step, corrupting each other's prev_own_hp_total/
+        # prev_opp_hp_total tracking (and hence the resulting reward)
+        # for both sides. Key by object identity instead -- battle1 and
+        # battle2 are stable, distinct objects for the lifetime of a
+        # battle, so this cleanly separates the two agents' state while
+        # still reusing the same entry turn-over-turn for a given agent.
+        key = id(battle)
         prev = self._reward_states.get(key, BattleRewardState())
         reward, new_state = compute_reward(battle, prev, self._reward_config)
         self._reward_states[key] = new_state
@@ -134,13 +147,10 @@ class ShowdownBattleEnv(gym.Env):
         safe_action, was_illegal = sanitize_action(int(action), mask)
 
         # poke-env's own SinglesEnv.action_to_order (called internally by
-        # SingleAgentWrapper.step -> PokeEnv.step) calls `.item()` on the
-        # action, i.e. it expects a numpy scalar/array, not a plain
-        # Python int -- passing `int` raises AttributeError deep inside
-        # poke-env. sanitize_action legitimately returns a plain int (it
-        # has no reason to know about this poke-env implementation
-        # detail), so convert at this boundary instead.
-        obs, reward, terminated, truncated, info = self._wrapped.step(np.int64(safe_action))
+        # SingleAgentWrapper.step -> PokeEnv.step) requires a numpy
+        # scalar action -- see environment/actions.py's
+        # as_poke_env_action for why.
+        obs, reward, terminated, truncated, info = self._wrapped.step(as_poke_env_action(safe_action))
 
         if was_illegal:
             self.n_invalid_actions += 1

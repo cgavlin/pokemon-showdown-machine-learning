@@ -1,6 +1,9 @@
 """
 Action space for the Pokemon battle RL environment.
 
+The environment should validate actions before applying
+them. Invalid actions should not silently become arbitrary legal actions.
+
 poke-env's `SinglesEnv` already encodes actions as a flat Discrete space
 (0..N-1) covering moves 1-4 (+ optional terastallize/mega/dynamax
 variants) and switches 1-6, and raises/handles illegal actions internally
