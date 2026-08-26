@@ -19,6 +19,7 @@ from poke_env.environment.singles_env import SinglesEnv
 from poke_env.player import Player
 
 from agents.inference import TrainedAgent
+from environment.actions import as_poke_env_action
 from environment.state import encode_battle
 
 
@@ -45,7 +46,4 @@ class CheckpointPlayer(Player):
         mask = np.array(SinglesEnv.get_action_mask(battle), dtype=np.int64)
         action_index = self._agent.act(obs, mask)
 
-        # Translate the flat action index back into a poke-env BattleOrder
-        # using the same layout SinglesEnv.get_action_mask/action_to_order
-        # use internally: [switch, move, mega, zmove, dynamax, tera].
-        return SinglesEnv.action_to_order(action_index, battle, fake=False, strict=False)
+        return SinglesEnv.action_to_order(as_poke_env_action(action_index), battle, fake=False, strict=False)
