@@ -91,7 +91,20 @@ class PooledSelfPlayTrainer:
         eval_battles: int = 20,
         eval_env_factory: Optional[Callable[[Player], ShowdownBattleEnv]] = None,
         team=None,
+        init_checkpoint: Optional[str | Path] = None,
     ):
+        # Fail fast on a bad init_checkpoint path -- before sampling an
+        # opponent or opening the env's real websocket connection below
+        # -- rather than deep inside torch.load after a connection has
+        # already been made. Mirrors SelfPlayTrainer's own check.
+        if init_checkpoint is not None and not Path(init_checkpoint).is_file():
+            raise FileNotFoundError(
+                f"init_checkpoint not found: {init_checkpoint}\n"
+                "Check the path and that training actually reached a "
+                "checkpoint-saving step."
+            )
+        self.init_checkpoint = init_checkpoint
+
         self.cfg = training_config
         self.reward_config = reward_config
         self.battle_format = battle_format
@@ -147,6 +160,22 @@ class PooledSelfPlayTrainer:
 
         n_actions = self.env.action_space.n
         self.q_network = DuelingQNetwork(obs_size, n_actions).to(self.device)
+        if self.init_checkpoint is not None:
+            # Warm-start the LEARNER's weights from a prior checkpoint
+            # (e.g. the previous curriculum stage's final checkpoint,
+            # threaded through by training/curriculum_runner.py) instead
+            # of always beginning from random initialization. This is
+            # independent of the opponent pool: opponents sampled from
+            # the pool are already past checkpoints, but until now the
+            # learner itself always restarted from scratch.
+            state_dict = torch.load(self.init_checkpoint, map_location=self.device)
+            if "q_network" not in state_dict:
+                raise ValueError(
+                    f"{self.init_checkpoint} loaded but doesn't look like a checkpoint "
+                    "saved by this project (missing the 'q_network' key)."
+                )
+            self.q_network.load_state_dict(state_dict["q_network"])
+            logger.info("Warm-started pooled self-play learner from %s", self.init_checkpoint)
         self.target_network = copy.deepcopy(self.q_network).to(self.device)
         self.target_network.eval()
         self.optimizer = torch.optim.Adam(self.q_network.parameters(), lr=self.cfg.learning_rate)
@@ -212,6 +241,7 @@ class PooledSelfPlayTrainer:
             "eval_opponent": self.eval_opponent_kind,
             "eval_every_n_swaps": self.eval_every_n_swaps,
             "eval_battles": self.eval_battles,
+            "init_checkpoint": str(self.init_checkpoint) if self.init_checkpoint else None,
             "seed": self.cfg.seed,
             "created_at": time.time(),
         }
