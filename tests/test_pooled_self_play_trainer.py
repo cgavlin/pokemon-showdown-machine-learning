@@ -12,7 +12,10 @@ Verifies, without any live Showdown server, that:
   - win rate against the just-finished opponent is recorded back into
     the pool (SelfPlayPool.update_win_rate), which is the whole point
     of wiring the pool into training at all -- without it, challenging
-    opponents never get pinned and the sampling never adapts.
+    opponents never get pinned and the sampling never adapts;
+  - init_checkpoint warm-starts the LEARNER's own weights (independent
+    of the opponent pool, which already holds past checkpoints) and
+    fails fast on a bad path, before any opponent/env is constructed.
 
 Both the environment and the scripted bootstrap-opponent factory are
 replaced with lightweight fakes: `env_factory` is a constructor
@@ -27,7 +30,10 @@ from __future__ import annotations
 import json
 
 import numpy as np
+import pytest
+import torch
 
+from agents.policy import DuelingQNetwork
 from environment.rewards import RewardConfig
 from environment.state import observation_size
 from training import pooled_self_play_trainer as pspt
@@ -114,7 +120,7 @@ class MockSingleAgentEnv:
         self.closed = True
 
 
-def _make_trainer(tmp_path, monkeypatch, episodes_per_opponent=2, total_steps=40):
+def _make_trainer(tmp_path, monkeypatch, episodes_per_opponent=2, total_steps=40, **trainer_kwargs):
     monkeypatch.setattr(pspt, "OPPONENT_FACTORIES", {"random": _fake_opponent_factory})
 
     created_envs = []
@@ -140,6 +146,7 @@ def _make_trainer(tmp_path, monkeypatch, episodes_per_opponent=2, total_steps=40
         run_dir=tmp_path,
         episodes_per_opponent=episodes_per_opponent,
         env_factory=env_factory,
+        **trainer_kwargs,
     )
     return trainer, created_envs
 
@@ -267,3 +274,54 @@ def test_fixed_opponent_eval_runs_every_n_swaps_and_logs_metrics(tmp_path, monke
         assert line["opponent"] == "heuristic"
         assert "win_rate" in line
         assert line["win_rate"] == 1.0  # eval env is rigged to always "win"
+
+
+# --- init_checkpoint (learner warm-start) --------------------------------
+
+
+def test_no_init_checkpoint_records_null_in_metadata(tmp_path, monkeypatch):
+    trainer, _ = _make_trainer(tmp_path, monkeypatch)
+    metadata = json.loads((trainer.run_dir / "run_metadata.json").read_text())
+    assert metadata["init_checkpoint"] is None
+
+
+def test_missing_init_checkpoint_raises_before_opening_a_connection(tmp_path, monkeypatch):
+    """A bad init_checkpoint path must fail immediately -- before
+    _sample_opponent()/env_factory (a real websocket connection in
+    production) even run. Verified here by making the opponent factory
+    itself raise, so the test fails loudly if the ordering ever
+    regresses."""
+    monkeypatch.setattr(pspt, "OPPONENT_FACTORIES", {"random": _fake_opponent_factory})
+
+    def _must_not_be_called(opponent):
+        raise AssertionError("env_factory must not run when init_checkpoint is invalid")
+
+    cfg = TrainingConfig(total_steps=1, batch_size=4, device="cpu")
+    with pytest.raises(FileNotFoundError, match="init_checkpoint not found"):
+        pspt.PooledSelfPlayTrainer(
+            training_config=cfg,
+            reward_config=RewardConfig(),
+            run_dir=tmp_path,
+            env_factory=_must_not_be_called,
+            init_checkpoint=str(tmp_path / "missing.pt"),
+        )
+
+
+def test_init_checkpoint_warm_starts_the_learner_not_just_the_pool(tmp_path, monkeypatch):
+    """The learner's OWN weights must come from init_checkpoint,
+    independent of the opponent pool (which is a separate mechanism --
+    it already holds past checkpoints, but until this feature existed
+    the learner itself always started random regardless)."""
+    net = DuelingQNetwork(observation_size(), N_ACTIONS)
+    checkpoint_path = tmp_path / "warm_start.pt"
+    torch.save({"q_network": net.state_dict(), "metadata": {}}, checkpoint_path)
+
+    trainer, _ = _make_trainer(tmp_path, monkeypatch, init_checkpoint=checkpoint_path)
+
+    expected_state = net.state_dict()
+    actual_state = trainer.q_network.state_dict()
+    for key in expected_state:
+        assert torch.equal(expected_state[key], actual_state[key]), f"mismatched weights for {key}"
+
+    metadata = json.loads((trainer.run_dir / "run_metadata.json").read_text())
+    assert metadata["init_checkpoint"] == str(checkpoint_path)
