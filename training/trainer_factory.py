@@ -50,6 +50,7 @@ def build_trainer(
     config: dict,
     stage: CurriculumStage,
     run_dir: str | Path,
+    init_checkpoint: Optional[str | Path] = None,
 ) -> TrainerUnion:
     """
     Reads config["self_play"] (if present) to decide which trainer to
@@ -71,7 +72,26 @@ def build_trainer(
     own env, scripted opponents, self-play checkpoint opponents) draws
     from that same team pool instead of poke-env's per-battle random
     team generation, which only exists for random-battle formats.
+
+    `init_checkpoint`, if given, warm-starts the built trainer's
+    network from that checkpoint's weights instead of a fresh random
+    initialization -- training/curriculum_runner.py passes the
+    previous curriculum stage's final checkpoint here, so each stage
+    actually builds on what the last one learned rather than
+    restarting from scratch every stage. Validated up front, before
+    any opponent or env is constructed, so a bad path fails fast
+    instead of surfacing after a real connection has already been
+    opened (the non-self-play path below opens its env in this very
+    function, ahead of the Trainer that would otherwise do the
+    validation).
     """
+    if init_checkpoint is not None and not Path(init_checkpoint).is_file():
+        raise FileNotFoundError(
+            f"init_checkpoint not found: {init_checkpoint}\n"
+            "Check the path and that training actually reached a "
+            "checkpoint-saving step."
+        )
+
     reward_config = RewardConfig(**config["reward"])
     training_config = TrainingConfig(**config["training"])
     self_play_cfg = config.get("self_play") or {}
@@ -92,6 +112,7 @@ def build_trainer(
             reward_config=reward_config,
             run_dir=run_dir,
             curriculum_stage_name=stage.name,
+            init_checkpoint=init_checkpoint,
         )
 
     mode = self_play_cfg.get("mode", "pooled")
@@ -115,6 +136,7 @@ def build_trainer(
             eval_every_n_swaps=self_play_cfg.get("eval_every_n_swaps", 0),
             eval_battles=self_play_cfg.get("eval_battles", 20),
             team=team,
+            init_checkpoint=init_checkpoint,
         )
 
     if mode == "mirror":
@@ -124,6 +146,7 @@ def build_trainer(
             run_dir=run_dir,
             battle_format=stage.battle_format,
             team=team,
+            init_checkpoint=init_checkpoint,
         )
 
     raise ValueError(f"Unknown self_play.mode: {mode!r}; expected 'pooled' or 'mirror'")
