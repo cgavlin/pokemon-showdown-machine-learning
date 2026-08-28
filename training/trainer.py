@@ -16,6 +16,7 @@ import time
 import uuid
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 import torch
@@ -65,6 +66,7 @@ class Trainer:
         run_dir: str | Path,
         curriculum_stage_name: str,
         team_pool_description: str = "default random team pool",
+        init_checkpoint: Optional[str | Path] = None,
     ):
         self.env = env
         self.cfg = training_config
@@ -74,12 +76,28 @@ class Trainer:
         self.run_dir.mkdir(parents=True, exist_ok=True)
         self.curriculum_stage_name = curriculum_stage_name
         self.team_pool_description = team_pool_description
+        self.init_checkpoint = init_checkpoint
 
         self.device = torch.device(self.cfg.device)
         obs_size = observation_size()
         n_actions = env.action_space.n
 
         self.q_network = DuelingQNetwork(obs_size, n_actions).to(self.device)
+        if init_checkpoint is not None:
+            # Warm-start from a prior run's checkpoint instead of always
+            # beginning from random initialization. In particular,
+            # training/curriculum_runner.py threads the PREVIOUS
+            # curriculum stage's final checkpoint through here, so each
+            # stage actually builds on what the last one learned instead
+            # of restarting from scratch every stage.
+            state_dict = torch.load(init_checkpoint, map_location=self.device)
+            if "q_network" not in state_dict:
+                raise ValueError(
+                    f"{init_checkpoint} loaded but doesn't look like a checkpoint saved "
+                    "by this project (missing the 'q_network' key)."
+                )
+            self.q_network.load_state_dict(state_dict["q_network"])
+            logger.info("Warm-started network from %s", init_checkpoint)
         self.target_network = copy.deepcopy(self.q_network).to(self.device)
         self.target_network.eval()
         self.optimizer = torch.optim.Adam(self.q_network.parameters(), lr=self.cfg.learning_rate)
@@ -100,6 +118,7 @@ class Trainer:
             "team_pool_description": self.team_pool_description,
             "opponent": type(self.env.opponent).__name__,
             "battle_format": getattr(self.env.opponent, "format", "unknown"),
+            "init_checkpoint": str(self.init_checkpoint) if self.init_checkpoint else None,
             "seed": self.cfg.seed,
             "created_at": time.time(),
         }
