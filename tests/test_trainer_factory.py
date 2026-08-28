@@ -4,6 +4,13 @@ self_play.enabled/self_play.mode in a config dict actually determine
 which trainer class gets built, since before this existed those config
 fields were purely documentation that scripts/train.py never read.
 
+Also verifies build_trainer's `init_checkpoint` param -- used by
+training/curriculum_runner.py to warm-start each curriculum stage from
+the previous stage's checkpoint -- is threaded through to whichever
+trainer class gets built, and that a bad path fails fast, before any
+opponent/env is constructed (which would otherwise open a real
+connection).
+
 These only check *which class* gets built and with *what arguments* --
 constructing a real ShowdownBattleEnv-backed trainer would need a live
 server, which is exercised manually, not here (see the module-level
@@ -14,12 +21,25 @@ construction and the eventual env both open real connections).
 from __future__ import annotations
 
 import pytest
+import torch
 
+from agents.policy import DuelingQNetwork
+from environment.state import observation_size
 from training.curriculum import get_stage
 from training.pooled_self_play_trainer import PooledSelfPlayTrainer
 from training.self_play_trainer import SelfPlayTrainer
 from training.trainer import Trainer
 from training.trainer_factory import build_trainer
+
+
+def _write_fake_checkpoint(path, n_actions: int = 26) -> None:
+    """A real, loadable checkpoint in this project's format (matching
+    what Trainer/SelfPlayTrainer/PooledSelfPlayTrainer's own
+    _save_checkpoint produces) -- needed because these trainers'
+    init_checkpoint handling calls torch.load for real, unlike the
+    lighter FileNotFoundError-only check in build_trainer itself."""
+    net = DuelingQNetwork(observation_size(), n_actions)
+    torch.save({"q_network": net.state_dict(), "metadata": {}}, path)
 
 BASE_CONFIG = {
     "reward": {},
@@ -291,3 +311,111 @@ def test_no_team_pool_dir_passes_team_none(tmp_path):
         build_trainer(dict(BASE_CONFIG), stage, run_dir=tmp_path)
 
     assert seen_teams == [None, None]
+
+
+# --- init_checkpoint threading -------------------------------------------
+
+
+class _FakeOpponent:
+    format = "gen9randombattle"
+
+
+class _FakeEnv:
+    action_space = type("Sp", (), {"n": 26})()
+    opponent = _FakeOpponent()
+
+    def reset(self, seed=None):
+        return None, {}
+
+    def get_action_mask(self):
+        return [1] * 26
+
+    def close(self):
+        pass
+
+
+def test_missing_init_checkpoint_raises_before_any_opponent_or_env_is_built(tmp_path, monkeypatch):
+    """A bad init_checkpoint path must fail immediately -- before
+    make_opponent/make_env (which open real connections for the
+    non-self-play path) are even called. Verified by making both raise
+    if called, so the test fails loudly if the ordering ever
+    regresses."""
+    import training.trainer_factory as factory_module
+
+    def _must_not_be_called(*args, **kwargs):
+        raise AssertionError("make_opponent/make_env must not run for a bad init_checkpoint")
+
+    monkeypatch.setattr(factory_module, "make_opponent", _must_not_be_called)
+    monkeypatch.setattr(factory_module, "make_env", _must_not_be_called)
+
+    stage = get_stage("stage1_basic_mechanics")
+    with pytest.raises(FileNotFoundError, match="init_checkpoint not found"):
+        build_trainer(
+            dict(BASE_CONFIG),
+            stage,
+            run_dir=tmp_path,
+            init_checkpoint=str(tmp_path / "missing.pt"),
+        )
+
+
+def test_valid_init_checkpoint_is_passed_to_plain_trainer(tmp_path, monkeypatch):
+    import training.trainer_factory as factory_module
+
+    fake_checkpoint = tmp_path / "checkpoint_step10.pt"
+    _write_fake_checkpoint(fake_checkpoint)
+
+    monkeypatch.setattr(factory_module, "make_env", lambda **kwargs: _FakeEnv())
+    monkeypatch.setattr(factory_module, "make_opponent", lambda stage, team=None: _FakeOpponent())
+
+    stage = get_stage("stage1_basic_mechanics")
+    trainer = build_trainer(dict(BASE_CONFIG), stage, run_dir=tmp_path, init_checkpoint=fake_checkpoint)
+
+    assert isinstance(trainer, Trainer)
+    assert trainer.init_checkpoint == fake_checkpoint
+
+
+def test_valid_init_checkpoint_is_passed_to_pooled_trainer(tmp_path, monkeypatch):
+    import training.pooled_self_play_trainer as pooled_module
+
+    fake_checkpoint = tmp_path / "checkpoint_step10.pt"
+    _write_fake_checkpoint(fake_checkpoint)
+
+    monkeypatch.setattr(pooled_module, "OPPONENT_FACTORIES", {"heuristic": lambda fmt, team: _FakeOpponent()})
+    monkeypatch.setattr(pooled_module, "make_env", lambda **kwargs: _FakeEnv())
+
+    config = dict(BASE_CONFIG, self_play={"enabled": True, "mode": "pooled"})
+    stage = get_stage("stage4_competitive_play")
+    trainer = build_trainer(config, stage, run_dir=tmp_path, init_checkpoint=fake_checkpoint)
+
+    assert isinstance(trainer, PooledSelfPlayTrainer)
+    assert trainer.init_checkpoint == fake_checkpoint
+
+
+def test_valid_init_checkpoint_is_passed_to_mirror_trainer(tmp_path, monkeypatch):
+    import training.self_play_trainer as mirror_module
+
+    fake_checkpoint = tmp_path / "checkpoint_step10.pt"
+    _write_fake_checkpoint(fake_checkpoint)
+
+    class _FakeMirrorEnv:
+        possible_agents = ["Player1 A", "Player2 B"]
+        agents = list(possible_agents)
+        action_spaces = {a: type("Sp", (), {"n": 26})() for a in possible_agents}
+
+        def reset(self, seed=None):
+            return {}, {}
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(mirror_module, "EncodedSinglesEnv", lambda **kwargs: _FakeMirrorEnv())
+
+    trainer = build_trainer(
+        dict(BASE_CONFIG, self_play={"enabled": True, "mode": "mirror"}),
+        get_stage("stage4_competitive_play"),
+        run_dir=tmp_path,
+        init_checkpoint=fake_checkpoint,
+    )
+
+    assert isinstance(trainer, SelfPlayTrainer)
+    assert trainer.init_checkpoint == fake_checkpoint
