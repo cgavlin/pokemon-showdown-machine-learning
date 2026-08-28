@@ -12,6 +12,16 @@ manual process: copy the yaml, change curriculum_stage, rerun
 scripts/train.py, separately rerun scripts/evaluate.py, eyeball the
 number against curriculum.py's source.
 
+Checkpoint continuity: each stage's trainer is warm-started from the
+PREVIOUS stage's final checkpoint (via training/trainer_factory.py's
+`init_checkpoint`), so the curriculum actually builds on what earlier
+stages learned instead of every stage starting from a fresh, randomly
+initialized network. Stage 1 (or whichever stage a run starts from)
+still starts random unless an explicit `init_checkpoint` is passed to
+CurriculumRunner itself -- useful when resuming a curriculum run with
+`start_stage` from a checkpoint produced by an earlier, separate
+CurriculumRunner invocation.
+
 Stops automatically before stage5_human_opponents: live battles remain
 behind the explicit, independent safety gate in showdown/integration.py
 and are never triggered by this or any other automated process, no
@@ -70,6 +80,7 @@ class CurriculumRunner:
         eval_device: str = "cpu",
         build_trainer_fn: Callable = build_trainer,
         evaluate_fn: Optional[Callable[[Path, CurriculumStage], dict]] = None,
+        init_checkpoint: Optional[str | Path] = None,
     ):
         self.base_config = base_config
         self.run_dir = Path(run_dir)
@@ -83,6 +94,13 @@ class CurriculumRunner:
         # live server, a real checkpoint, or torch at all.
         self._build_trainer_fn = build_trainer_fn
         self._evaluate_fn = evaluate_fn or self._default_evaluate_checkpoint
+        # Warm-starts the FIRST stage this run actually trains (either
+        # stage1, or `start_stage` when resuming) from an existing
+        # checkpoint instead of a fresh random network. Every
+        # subsequent stage is automatically warm-started from the
+        # previous stage's own final checkpoint regardless of this
+        # value -- see run().
+        self.init_checkpoint = init_checkpoint
         self.progress_log_path = self.run_dir / "curriculum_progress.jsonl"
 
     def _log_progress(self, **kwargs) -> None:
@@ -115,6 +133,13 @@ class CurriculumRunner:
 
     def run(self) -> None:
         started = self.start_stage is None
+        # The checkpoint to warm-start the NEXT stage trained from.
+        # Starts as whatever the caller passed in (None by default,
+        # meaning the first stage trained begins from a random
+        # network); after each stage trains, this is updated to that
+        # stage's own final checkpoint so the following stage builds on
+        # it in turn.
+        next_init_checkpoint = self.init_checkpoint
 
         for stage in CURRICULUM:
             if not started:
@@ -136,11 +161,18 @@ class CurriculumRunner:
 
             logger.info("Curriculum: starting stage %s", stage.name)
             stage_config = self._stage_config(stage)
-            trainer = self._build_trainer_fn(stage_config, stage, self.run_dir)
+            used_init_checkpoint = next_init_checkpoint
+            trainer = self._build_trainer_fn(
+                stage_config, stage, self.run_dir, init_checkpoint=used_init_checkpoint
+            )
             try:
                 checkpoint_path = trainer.train()
             finally:
                 trainer.env.close()
+
+            # This stage's own final checkpoint becomes the warm-start
+            # for whichever stage trains next.
+            next_init_checkpoint = checkpoint_path
 
             logger.info("Curriculum: evaluating stage %s checkpoint %s", stage.name, checkpoint_path)
             eval_summary = self._evaluate_fn(checkpoint_path, stage)
@@ -150,6 +182,7 @@ class CurriculumRunner:
                 stage=stage.name,
                 event="stage_evaluated",
                 checkpoint=str(checkpoint_path),
+                init_checkpoint=str(used_init_checkpoint) if used_init_checkpoint else None,
                 eval_summary=eval_summary,
                 gate=stage.min_eval_win_rate_to_advance,
                 passed=passed,
