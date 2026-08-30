@@ -2,3 +2,14 @@
 .github
 .pytest_cache
 __pycache__
+runs/
+
+# sandbox-only cruft from this dev environment, not part of the project
+.cache/
+.config/
+.local/
+.npm/
+.npm-global/
+.npmrc
+.wget-hsts
+*.pyc
