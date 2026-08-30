@@ -30,6 +30,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from environment.state import MAX_TEAM_SIZE
+
 
 @dataclass
 class RewardConfig:
@@ -98,8 +100,8 @@ class BattleRewardState:
 
     prev_own_fainted: int = 0
     prev_opp_fainted: int = 0
-    prev_own_hp_total: float = 6.0
-    prev_opp_hp_total: float = 6.0
+    prev_own_hp_total: float = MAX_TEAM_SIZE
+    prev_opp_hp_total: float = MAX_TEAM_SIZE
 
 
 def compute_reward(battle, prev_state: BattleRewardState, cfg: RewardConfig) -> tuple[float, BattleRewardState]:
