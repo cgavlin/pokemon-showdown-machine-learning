@@ -13,6 +13,8 @@ Usage:
     python scripts/self_play_train.py --config configs/default.yaml
     python scripts/self_play_train.py --config configs/default.yaml \
         --player1-username "Player1 A" --player2-username "Player2 B"
+    python scripts/self_play_train.py --config configs/default.yaml \
+        --init-checkpoint runs/.../checkpoint_step200000.pt
 
 Requires a local Pokemon Showdown server (see README.md). Never
 connects anywhere else -- see showdown/integration.py for the
@@ -41,6 +43,13 @@ def main() -> None:
     parser.add_argument("--run-dir", type=str, default="runs")
     parser.add_argument("--player1-username", type=str, default="Player1 A")
     parser.add_argument("--player2-username", type=str, default="Player2 B")
+    parser.add_argument(
+        "--init-checkpoint",
+        type=str,
+        default=None,
+        help="Warm-start the shared network from this checkpoint's weights "
+        "instead of a fresh random initialization.",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -57,6 +66,7 @@ def main() -> None:
         battle_format=config.get("battle_format", "gen9randombattle"),
         player1_username=args.player1_username,
         player2_username=args.player2_username,
+        init_checkpoint=args.init_checkpoint,
     )
 
     checkpoint_path = None
