@@ -16,6 +16,7 @@ different underlying battle simulator later without changing callers.
 from __future__ import annotations
 
 import logging
+import uuid
 from typing import Optional
 
 import gymnasium as gym
@@ -35,17 +36,34 @@ LOCAL_SERVER_CONFIGURATION = ServerConfiguration(
     "ws://localhost:8000/showdown/websocket",
     "https://play.pokemonshowdown.com/action.php?",
 )
-# Showdown usernames are capped at 18 chars, which is why poke-env's
-# auto-generated default (from the class name "EncodedSinglesEnv")
-# shows up in battle logs truncated to the meaningless "EncodedSingl".
-# EncodedSinglesEnv is a two-agent env under the hood even in the
-# single-agent (SingleAgentWrapper) path: account_configuration1 is
-# OUR learner's Showdown connection, account_configuration2 is the
-# opponent's -- the opponent Player object passed in separately only
-# supplies move-choosing logic, not the ladder account, so it must be
-# set here too or it falls back to the same ugly auto-name.
-_LEARNER_USERNAME = "AshGPT"
-_OPPONENT_USERNAME = "Promptachu"
+# Showdown usernames are capped at 18 chars. These are base names only
+# -- see _unique_username() below for why every actual connection gets
+# a random suffix appended rather than using these directly.
+_LEARNER_USERNAME_BASE = "AshGPT"
+_OPPONENT_USERNAME_BASE = "Promptachu"
+
+
+def _unique_username(base: str) -> str:
+    """
+    Appends a short random suffix to `base` so every ShowdownBattleEnv
+    connection gets its own Showdown username instead of colliding.
+
+    A fixed, hardcoded username reused across every env instance causes
+    a `|nametaken|` ShowdownException the moment two connections
+    overlap even slightly -- e.g. a previous run's connection hasn't
+    finished tearing down yet, or a single process opens several envs
+    back-to-back (training/curriculum_runner.py builds one per
+    curriculum stage; training/pooled_self_play_trainer.py rebuilds one
+    on every opponent swap plus one per absolute-skill eval). None of
+    those are errors on our end -- they're just more than one
+    connection under the same name existing at overlapping times.
+    Suffixing with a few random hex chars (kept short enough to stay
+    under Showdown's 18-char username cap even for the longer base
+    name) makes every connection's name unique instead.
+    """
+    suffix = uuid.uuid4().hex[:6]
+    return f"{base}{suffix}"[:18]
+
 
 class EncodedSinglesEnv(SinglesEnv):
     """
@@ -129,8 +147,9 @@ class ShowdownBattleEnv(gym.Env):
             reward_config=self.reward_config,
             battle_format=battle_format,
             server_configuration=server_configuration,
-            account_configuration1=account_configuration or AccountConfiguration(_LEARNER_USERNAME, None),
-            account_configuration2=AccountConfiguration(_OPPONENT_USERNAME, None),
+            account_configuration1=account_configuration
+            or AccountConfiguration(_unique_username(_LEARNER_USERNAME_BASE), None),
+            account_configuration2=AccountConfiguration(_unique_username(_OPPONENT_USERNAME_BASE), None),
             team=team,
         )
         self.opponent = opponent or RandomPlayer(battle_format=battle_format, team=team)
