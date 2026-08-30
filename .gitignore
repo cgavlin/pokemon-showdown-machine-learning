@@ -1,7 +1,8 @@
 .dist
 .github
 .pytest_cache
-__pycache__
+*/__pycache__
+agents/__pycache__
 runs/
 
 # sandbox-only cruft from this dev environment, not part of the project
@@ -13,3 +14,4 @@ runs/
 .npmrc
 .wget-hsts
 *.pyc
+evaluation\__pycache__

@@ -35,7 +35,17 @@ LOCAL_SERVER_CONFIGURATION = ServerConfiguration(
     "ws://localhost:8000/showdown/websocket",
     "https://play.pokemonshowdown.com/action.php?",
 )
-
+# Showdown usernames are capped at 18 chars, which is why poke-env's
+# auto-generated default (from the class name "EncodedSinglesEnv")
+# shows up in battle logs truncated to the meaningless "EncodedSingl".
+# EncodedSinglesEnv is a two-agent env under the hood even in the
+# single-agent (SingleAgentWrapper) path: account_configuration1 is
+# OUR learner's Showdown connection, account_configuration2 is the
+# opponent's -- the opponent Player object passed in separately only
+# supplies move-choosing logic, not the ladder account, so it must be
+# set here too or it falls back to the same ugly auto-name.
+_LEARNER_USERNAME = "AshGPT"
+_OPPONENT_USERNAME = "Promptachu"
 
 class EncodedSinglesEnv(SinglesEnv):
     """
@@ -119,7 +129,8 @@ class ShowdownBattleEnv(gym.Env):
             reward_config=self.reward_config,
             battle_format=battle_format,
             server_configuration=server_configuration,
-            account_configuration1=account_configuration,
+            account_configuration1=account_configuration or AccountConfiguration(_LEARNER_USERNAME, None),
+            account_configuration2=AccountConfiguration(_OPPONENT_USERNAME, None),
             team=team,
         )
         self.opponent = opponent or RandomPlayer(battle_format=battle_format, team=team)
