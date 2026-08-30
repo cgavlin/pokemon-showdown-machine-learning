@@ -19,6 +19,7 @@ import numpy as np
 from agents.inference import TrainedAgent
 from environment.actions import describe_action
 from environment.battle_env import ShowdownBattleEnv
+from environment.state import MAX_TEAM_SIZE
 from evaluation.metrics import AggregateMetrics, BattleMetrics
 
 logger = logging.getLogger(__name__)
@@ -129,8 +130,8 @@ def evaluate_agent(
             total_reward=total_reward,
             own_fainted=own_fainted,
             opponent_fainted=opp_fainted,
-            own_damage_dealt_fraction=max(0.0, 6.0 - opp_hp),
-            own_damage_taken_fraction=max(0.0, 6.0 - own_hp),
+            own_damage_dealt_fraction=max(0.0, MAX_TEAM_SIZE - opp_hp),
+            own_damage_taken_fraction=max(0.0, MAX_TEAM_SIZE - own_hp),
             n_switches=n_switches,
             n_moves=n_moves,
             n_super_effective_moves=n_super_effective,
