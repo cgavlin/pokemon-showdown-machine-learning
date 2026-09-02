@@ -52,7 +52,7 @@ import time
 import uuid
 from dataclasses import asdict
 from pathlib import Path
-from typing import Callable, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
 import numpy as np
 import torch
@@ -70,6 +70,9 @@ from training.curriculum import OPPONENT_FACTORIES
 from training.dqn_update import double_dqn_update
 from training.self_play import PoolEntry, SelfPlayPool
 from training.trainer import ENVIRONMENT_VERSION, TrainingConfig, _epsilon_at
+
+if TYPE_CHECKING:
+    from knowledge.pokemon_knowledge import PokemonKnowledgeBase
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +95,7 @@ class PooledSelfPlayTrainer:
         eval_env_factory: Optional[Callable[[Player], ShowdownBattleEnv]] = None,
         team=None,
         init_checkpoint: Optional[str | Path] = None,
+        knowledge_base: Optional["PokemonKnowledgeBase"] = None,
     ):
         # Fail fast on a bad init_checkpoint path -- before sampling an
         # opponent or opening the env's real websocket connection below
@@ -104,6 +108,7 @@ class PooledSelfPlayTrainer:
                 "checkpoint-saving step."
             )
         self.init_checkpoint = init_checkpoint
+        self.knowledge_base = knowledge_base
 
         self.cfg = training_config
         self.reward_config = reward_config
@@ -193,10 +198,17 @@ class PooledSelfPlayTrainer:
             reward_config=self.reward_config,
             local=True,
             team=self.team,
+            knowledge_base=self.knowledge_base,
         )
 
     def _default_eval_env_factory(self, opponent: Player) -> ShowdownBattleEnv:
-        return make_env(opponent=opponent, battle_format=self.battle_format, local=True, team=self.team)
+        return make_env(
+            opponent=opponent,
+            battle_format=self.battle_format,
+            local=True,
+            team=self.team,
+            knowledge_base=self.knowledge_base,
+        )
 
     def _sample_opponent(self) -> Player:
         """Sample an opponent from the pool, weighted toward
@@ -226,6 +238,7 @@ class PooledSelfPlayTrainer:
             device=str(self.device),
             battle_format=self.battle_format,
             team=self.team,
+            knowledge_base=self.knowledge_base,
         )
 
     def _write_run_metadata(self) -> None:
@@ -242,6 +255,11 @@ class PooledSelfPlayTrainer:
             "eval_every_n_swaps": self.eval_every_n_swaps,
             "eval_battles": self.eval_battles,
             "init_checkpoint": str(self.init_checkpoint) if self.init_checkpoint else None,
+            "knowledge_base_path": (
+                str(self.knowledge_base.path)
+                if self.knowledge_base is not None and self.knowledge_base.path is not None
+                else None
+            ),
             "seed": self.cfg.seed,
             "created_at": time.time(),
         }
@@ -271,6 +289,13 @@ class PooledSelfPlayTrainer:
         if self._current_opponent_entry is not None:
             return Path(self._current_opponent_entry.checkpoint_path).name
         return f"scripted:{self.bootstrap_opponent}"
+
+    def _record_finished_battle_in_knowledge_base(self) -> None:
+        if self.knowledge_base is None:
+            return
+        battle = self.env._underlying.battle1
+        if battle is not None:
+            self.knowledge_base.observe_battle(battle)
 
     def _run_fixed_opponent_eval(self, step: int, checkpoint_path: Path) -> None:
         """Absolute-skill check: evaluate the just-saved checkpoint
@@ -354,6 +379,7 @@ class PooledSelfPlayTrainer:
                 battle = self.env._underlying.battle1
                 won = bool(battle.won) if battle is not None else False
                 wins_since_swap += int(won)
+                self._record_finished_battle_in_knowledge_base()
 
                 self._log_metrics(
                     step=step,
@@ -393,6 +419,8 @@ class PooledSelfPlayTrainer:
                 )
                 losses = []
                 self._save_checkpoint(step)
+                if self.knowledge_base is not None and self.knowledge_base.path is not None:
+                    self.knowledge_base.save()
 
         # Final bookkeeping for whichever opponent we ended the run on.
         if episodes_since_swap > 0 and self._current_opponent_entry is not None:
@@ -403,5 +431,7 @@ class PooledSelfPlayTrainer:
 
         final_checkpoint = self._save_checkpoint(self.cfg.total_steps)
         self.pool.add_checkpoint(final_checkpoint)
+        if self.knowledge_base is not None and self.knowledge_base.path is not None:
+            self.knowledge_base.save()
         logger.info("Pooled self-play training complete. Final checkpoint: %s", final_checkpoint)
         return final_checkpoint
