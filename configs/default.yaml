@@ -6,7 +6,7 @@
 
 experiment_name: "stage1_basic_mechanics_baseline"
 curriculum_stage: "stage1_basic_mechanics"
-environment_version: "0.1.0"
+environment_version: "0.2.0"
 
 battle_format: "gen9randombattle"
 local_showdown_server: "ws://localhost:8000/showdown/websocket"
@@ -20,6 +20,15 @@ team_pool_dir: null       # for non-random-battle formats (e.g. gen9ou),
                            # which doesn't apply outside random-battle
                            # formats. Leave null for gen9randombattle.
 team_pool_pattern: "*.txt"
+
+knowledge_base_path: "runs/pokemon_knowledge.json"
+                           # See knowledge/pokemon_knowledge.py. Shared
+                           # across every run pointed at this same path,
+                           # so it keeps growing run over run instead of
+                           # starting empty each time. Set to null to
+                           # disable the feature entirely (the relevant
+                           # part of the observation is then always
+                           # zero-filled instead of learned).
 
 reward:
   effective_move: 0.15

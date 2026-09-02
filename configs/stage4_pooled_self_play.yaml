@@ -15,7 +15,7 @@
 
 experiment_name: "stage4_competitive_play_pooled_self_play"
 curriculum_stage: "stage4_competitive_play"
-environment_version: "0.1.0"
+environment_version: "0.2.0"
 
 battle_format: "gen9ou"
 local_showdown_server: "ws://localhost:8000/showdown/websocket"
@@ -26,6 +26,11 @@ team_pool_dir: "configs/teams/stage3_ou"  # gen9ou needs an explicit team
                                             # illustrative starting points;
                                             # verify/replace them for real use.
 team_pool_pattern: "*.txt"
+
+knowledge_base_path: "runs/pokemon_knowledge.json"
+                           # Shared with configs/default.yaml's path on
+                           # purpose: species knowledge learned during
+                           # earlier stages is just as useful here.
 
 reward:
   effective_move: 0.15
