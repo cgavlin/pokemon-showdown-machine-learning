@@ -5,9 +5,9 @@ Unlike environment/state.py's per-battle observation encoding (which
 only ever reflects what's revealed *within the current battle*, by
 design -- see that module's docstring on the known/unknown boundary),
 this module accumulates what the agent has learned across MANY
-battles: which moves, abilities, and items a given species has
-actually been seen carrying, plus that species' current typing (and
-the weaknesses/resistances/immunities derived from it).
+battles: which moves (and move types), abilities, and items a given
+species has actually been seen carrying, plus that species' current
+typing (and the weaknesses/resistances/immunities derived from it).
 
 Two very different kinds of "knowledge" live here:
   - Typing -> weaknesses/resistances/immunities: fully determined by
@@ -18,14 +18,15 @@ Two very different kinds of "knowledge" live here:
     battles the agent plays, the better its picture of what a species
     is likely to be carrying, which is exactly the kind of prior
     real players build up from experience (and unrevealed opponent
-    moves/items/abilities are never available witinh a single battle
+    moves/items/abilities are never available within a single battle
     otherwise).
 
-TODO: Wire into environment/state.py's observation encoding: 
-doing so changes observation_size() and would need an
-ENVIRONMENT_VERSION bump, invalidating existing checkpoints.
-This module is usable standalone (e.g. for inspection, analysis, or 
-a future explicit wiring step) without touching training in the meantime.
+Wired into training via observation_features(), which
+environment/state.py's encode_battle() calls (through a duck-typed
+Optional[knowledge_base] parameter, to avoid a circular import back to
+this module) to append a per-opponent-Pokemon "historical move-type
+coverage" block to the observation -- see that module's docstring for
+why this only applies to the opponent side.
 """
 
 from __future__ import annotations
@@ -36,7 +37,16 @@ from pathlib import Path
 
 from environment.state import POKEMON_TYPES
 
-# Standard type chart (attacker -> {defender: multiplier}). Only
+# battles_seen at/above this counts as "fully confident" in
+# observation_features()'s confidence scalar -- an arbitrary but
+# reasonable point at which a handful of observed battles against a
+# species starts meaning something statistically, tunable later
+# without changing the observation SHAPE (confidence is still a single
+# scalar in [0, 1] regardless of this constant's value).
+KNOWLEDGE_CONFIDENCE_CAP = 20
+
+# Standard type chart (attacker -> {defender: multiplier}), unchanged
+# since Fairy was added in Gen 6 and still valid in Gen 9. Only
 # non-1.0 entries are listed; unlisted attacker/defender pairs are
 # neutral (1.0), handled by the .get(..., 1.0) lookups below.
 TYPE_CHART: dict[str, dict[str, float]] = {
@@ -94,6 +104,7 @@ def type_effectiveness(attacking_type: str, defending_types: list[str]) -> float
 class SpeciesRecord:
     types: list[str] = field(default_factory=list)
     move_counts: dict[str, int] = field(default_factory=dict)
+    move_type_counts: dict[str, int] = field(default_factory=dict)
     ability_counts: dict[str, int] = field(default_factory=dict)
     item_counts: dict[str, int] = field(default_factory=dict)
     battles_seen: int = 0
@@ -103,6 +114,9 @@ class SpeciesRecord:
 
     @classmethod
     def from_dict(cls, data: dict) -> "SpeciesRecord":
+        # Tolerate older saved files from before move_type_counts existed.
+        data = dict(data)
+        data.setdefault("move_type_counts", {})
         return cls(**data)
 
 
@@ -169,8 +183,36 @@ class PokemonKnowledgeBase:
         if item:
             record.item_counts[item] = record.item_counts.get(item, 0) + 1
 
-        for move_id in (getattr(pokemon, "moves", None) or {}):
+        moves = getattr(pokemon, "moves", None) or {}
+        for move_id, move in moves.items():
             record.move_counts[move_id] = record.move_counts.get(move_id, 0) + 1
+            move_type_obj = getattr(move, "type", None)
+            move_type = move_type_obj.name.lower() if move_type_obj else None
+            if move_type:
+                record.move_type_counts[move_type] = record.move_type_counts.get(move_type, 0) + 1
+
+    def observation_features(self, species: str) -> tuple[list[float], float]:
+        """
+        Returns (move_type_coverage[len(POKEMON_TYPES)], confidence) --
+        ready to drop straight into environment/state.py's observation
+        encoding. move_type_coverage is the fraction of every recorded
+        move-observation for this species that was of each type (sums
+        to 1.0 if there's any data at all); confidence is battles_seen
+        scaled to [0, 1] via KNOWLEDGE_CONFIDENCE_CAP. Both are all-
+        zero for a species this knowledge base has never observed.
+        """
+        record = self._records.get(species.lower())
+        if record is None:
+            return [0.0] * len(POKEMON_TYPES), 0.0
+
+        total = sum(record.move_type_counts.values())
+        if total == 0:
+            coverage = [0.0] * len(POKEMON_TYPES)
+        else:
+            coverage = [record.move_type_counts.get(t, 0) / total for t in POKEMON_TYPES]
+
+        confidence = min(record.battles_seen / KNOWLEDGE_CONFIDENCE_CAP, 1.0)
+        return coverage, confidence
 
     def species_summary(self, species: str) -> dict | None:
         """Returns None for a species never observed. Otherwise: known
@@ -194,6 +236,7 @@ class PokemonKnowledgeBase:
         top_moves = sorted(record.move_counts.items(), key=lambda kv: kv[1], reverse=True)
         top_ability = max(record.ability_counts.items(), key=lambda kv: kv[1])[0] if record.ability_counts else None
         top_item = max(record.item_counts.items(), key=lambda kv: kv[1])[0] if record.item_counts else None
+        coverage, confidence = self.observation_features(species)
 
         return {
             "species": species.lower(),
@@ -204,6 +247,8 @@ class PokemonKnowledgeBase:
             "immunities": immunities,
             "known_moves_by_frequency": [move for move, _ in top_moves],
             "move_counts": dict(record.move_counts),
+            "move_type_coverage": dict(zip(POKEMON_TYPES, coverage)),
+            "confidence": confidence,
             "most_common_ability": top_ability,
             "most_common_item": top_item,
         }
