@@ -26,6 +26,7 @@ import time
 import uuid
 from dataclasses import asdict
 from pathlib import Path
+from typing import TYPE_CHECKING, Optional
 
 import numpy as np
 import torch
@@ -39,6 +40,9 @@ from environment.rewards import RewardConfig
 from environment.state import observation_size
 from training.dqn_update import double_dqn_update
 from training.trainer import ENVIRONMENT_VERSION, TrainingConfig, _epsilon_at
+
+if TYPE_CHECKING:
+    from knowledge.pokemon_knowledge import PokemonKnowledgeBase
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +59,7 @@ class SelfPlayTrainer:
         team: str | None = None,
         env=None,
         init_checkpoint: str | Path | None = None,
+        knowledge_base: Optional["PokemonKnowledgeBase"] = None,
     ):
         self.cfg = training_config
         self.reward_config = reward_config
@@ -65,6 +70,7 @@ class SelfPlayTrainer:
         self.player1_username = player1_username
         self.player2_username = player2_username
         self.init_checkpoint = init_checkpoint
+        self.knowledge_base = knowledge_base
 
         # Fail fast on a bad checkpoint path -- before opening any real
         # connection below -- rather than deep inside torch.load after
@@ -86,6 +92,7 @@ class SelfPlayTrainer:
         # leave it as None and get a real EncodedSinglesEnv.
         self.env = env or EncodedSinglesEnv(
             reward_config=self.reward_config,
+            knowledge_base=self.knowledge_base,
             battle_format=battle_format,
             server_configuration=LOCAL_SERVER_CONFIGURATION,
             account_configuration1=AccountConfiguration(player1_username, None),
@@ -135,6 +142,11 @@ class SelfPlayTrainer:
             "player1_username": self.player1_username,
             "player2_username": self.player2_username,
             "init_checkpoint": str(self.init_checkpoint) if self.init_checkpoint else None,
+            "knowledge_base_path": (
+                str(self.knowledge_base.path)
+                if self.knowledge_base is not None and self.knowledge_base.path is not None
+                else None
+            ),
             "seed": self.cfg.seed,
             "created_at": time.time(),
         }
@@ -180,6 +192,20 @@ class SelfPlayTrainer:
             actions[agent_id] = as_poke_env_action(action)
         return actions
 
+    def _record_finished_battle_in_knowledge_base(self) -> None:
+        """battle1 and battle2 are two distinct Battle objects, but
+        each already contains BOTH participants (its own `team` plus
+        the opponent's `opponent_team`) -- so recording both would
+        observe every real battle TWICE (double-counting battles_seen
+        and every move/ability/item count). battle1 alone is enough;
+        matches the same battle1-not-battle2 convention documented in
+        evaluation/benchmarks.py."""
+        if self.knowledge_base is None:
+            return
+        battle = getattr(self.env, "battle1", None)
+        if battle is not None:
+            self.knowledge_base.observe_battle(battle)
+
     def train(self) -> Path:
         observations, infos = self.env.reset(seed=self.cfg.seed)
         agent_ids = list(self.env.agents)
@@ -224,6 +250,7 @@ class SelfPlayTrainer:
                 battle2 = getattr(self.env, "battle2", None)
                 player1_won = bool(battle1.won) if battle1 is not None else None
                 player2_won = bool(battle2.won) if battle2 is not None else None
+                self._record_finished_battle_in_knowledge_base()
                 self._log_metrics(
                     step=step,
                     event="episode_end",
@@ -250,7 +277,11 @@ class SelfPlayTrainer:
                 self._log_metrics(step=step, event="train_progress", avg_loss=avg_loss)
                 losses = []
                 self._save_checkpoint(step)
+                if self.knowledge_base is not None and self.knowledge_base.path is not None:
+                    self.knowledge_base.save()
 
         final_checkpoint = self._save_checkpoint(self.cfg.total_steps)
+        if self.knowledge_base is not None and self.knowledge_base.path is not None:
+            self.knowledge_base.save()
         logger.info("Self-play training complete. Final checkpoint: %s", final_checkpoint)
         return final_checkpoint
