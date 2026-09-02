@@ -1,10 +1,15 @@
 from types import SimpleNamespace
 
 from knowledge.pokemon_knowledge import PokemonKnowledgeBase, type_effectiveness
+from environment.state import POKEMON_TYPES
 
 
 def _fake_type(name):
     return SimpleNamespace(name=name.upper())
+
+
+def _fake_move(move_type):
+    return SimpleNamespace(type=_fake_type(move_type))
 
 
 def _fake_pokemon(species, type1="water", type2=None, ability=None, item=None, moves=None):
@@ -38,7 +43,7 @@ def test_type_effectiveness_immunity():
 
 
 def test_type_effectiveness_dual_type_multiplies():
-    # Water/Ground (Quagsire): Electric is 2.0 vs
+    # Water/Ground (e.g. a Quagsire-like typing): Electric is 2.0 vs
     # water but 0.0 vs ground -> immune overall.
     assert type_effectiveness("electric", ["water", "ground"]) == 0.0
 
@@ -92,7 +97,7 @@ def test_moves_abilities_items_accumulate_across_multiple_battles():
         {"o1": _fake_pokemon(
             "Landorus-Therian", type1="ground", type2="flying",
             ability="Intimidate", item="Choice Scarf",
-            moves={"earthquake": object(), "uturn": object()},
+            moves={"earthquake": _fake_move("ground"), "uturn": _fake_move("bug")},
         )},
     )
     kb.observe_battle(battle1)
@@ -102,7 +107,7 @@ def test_moves_abilities_items_accumulate_across_multiple_battles():
         {"o1": _fake_pokemon(
             "Landorus-Therian", type1="ground", type2="flying",
             ability="Intimidate", item="Leftovers",
-            moves={"earthquake": object(), "stoneedge": object()},
+            moves={"earthquake": _fake_move("ground"), "stoneedge": _fake_move("rock")},
         )},
     )
     kb.observe_battle(battle2)
@@ -143,6 +148,61 @@ def test_unrevealed_ability_and_item_are_not_recorded():
     assert summary["most_common_item"] is None
 
 
+def test_move_with_no_type_attribute_is_tolerated():
+    """A caller might pass in something move-like without a .type
+    (e.g. a bare object in a quick test) -- must not crash, just skip
+    type-coverage tracking for that move while still counting the move
+    itself."""
+    battle = _fake_battle({}, {"o1": _fake_pokemon("Ditto", moves={"transform": object()})})
+    kb = PokemonKnowledgeBase()
+    kb.observe_battle(battle)
+    summary = kb.species_summary("ditto")
+    assert summary["move_counts"] == {"transform": 1}
+    assert sum(summary["move_type_coverage"].values()) == 0.0
+
+
+# --- observation_features (state.py integration point) ----------------------
+
+
+def test_observation_features_unseen_species_is_all_zero():
+    kb = PokemonKnowledgeBase()
+    coverage, confidence = kb.observation_features("mewtwo")
+    assert coverage == [0.0] * len(POKEMON_TYPES)
+    assert confidence == 0.0
+
+
+def test_observation_features_coverage_sums_to_one_and_matches_type_fractions():
+    battle = _fake_battle({}, {"o1": _fake_pokemon(
+        "Garchomp", type1="dragon", type2="ground",
+        moves={
+            "outrage": _fake_move("dragon"),
+            "earthquake": _fake_move("ground"),
+            "dragonclaw": _fake_move("dragon"),
+            "swordsdance": _fake_move("normal"),
+        },
+    )})
+    kb = PokemonKnowledgeBase()
+    kb.observe_battle(battle)
+
+    coverage, confidence = kb.observation_features("garchomp")
+    coverage_by_type = dict(zip(POKEMON_TYPES, coverage))
+    assert coverage_by_type["dragon"] == 2 / 4
+    assert coverage_by_type["ground"] == 1 / 4
+    assert coverage_by_type["normal"] == 1 / 4
+    assert abs(sum(coverage) - 1.0) < 1e-9
+    assert confidence == 1 / 20  # KNOWLEDGE_CONFIDENCE_CAP default is 20
+
+
+def test_observation_features_confidence_caps_at_one():
+    battle = _fake_battle({}, {"o1": _fake_pokemon("Pikachu", type1="electric", moves={})})
+    kb = PokemonKnowledgeBase()
+    for _ in range(25):  # well past KNOWLEDGE_CONFIDENCE_CAP=20
+        kb.observe_battle(battle)
+
+    _, confidence = kb.observation_features("pikachu")
+    assert confidence == 1.0
+
+
 # --- save / load -------------------------------------------------------------
 
 
@@ -155,7 +215,7 @@ def test_save_and_load_round_trip(tmp_path):
         {"o1": _fake_pokemon(
             "Garchomp", type1="dragon", type2="ground",
             ability="Rough Skin", item="Life Orb",
-            moves={"outrage": object()},
+            moves={"outrage": _fake_move("dragon")},
         )},
     )
     kb.observe_battle(battle)
@@ -166,6 +226,11 @@ def test_save_and_load_round_trip(tmp_path):
     assert summary["types"] == ["dragon", "ground"]
     assert summary["move_counts"] == {"outrage": 1}
     assert summary["most_common_ability"] == "Rough Skin"
+    # move_type_counts must round-trip through JSON too, since
+    # observation_features() (used every step during training) depends
+    # on it, not just move_counts.
+    coverage, _ = reloaded.observation_features("garchomp")
+    assert dict(zip(POKEMON_TYPES, coverage))["dragon"] == 1.0
 
 
 def test_loading_a_missing_path_starts_empty(tmp_path):
