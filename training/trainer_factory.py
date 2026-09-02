@@ -16,6 +16,15 @@ Also builds a shared team pool from config["team_pool_dir"] (if set)
 and threads it through to whichever trainer gets built -- see
 environment/team_pool.py's TeamPool for why non-random-battle formats
 need this.
+
+And builds a shared PokemonKnowledgeBase from config["knowledge_base_path"]
+(if set), threading the SAME instance into both the env (so every
+observation this run produces reflects it) and the trainer itself (so
+it keeps growing as battles finish) -- see knowledge/pokemon_knowledge.py.
+Leaving knowledge_base_path unset (or null) simply means every
+knowledge-derived feature in the observation stays zero-filled; the
+observation SHAPE is unaffected either way (environment/state.py
+guarantees this), so there is no other code path to keep in sync.
 """
 
 from __future__ import annotations
@@ -26,6 +35,7 @@ from typing import Optional, Union
 from environment.battle_env import make_env
 from environment.rewards import RewardConfig
 from environment.team_pool import TeamPool
+from knowledge.pokemon_knowledge import PokemonKnowledgeBase
 from training.curriculum import CurriculumStage, make_opponent
 from training.pooled_self_play_trainer import PooledSelfPlayTrainer
 from training.self_play_trainer import SelfPlayTrainer
@@ -44,6 +54,22 @@ def _build_team(config: dict, seed: Optional[int] = None):
     return TeamPool.from_directory(
         team_pool_dir, pattern=config.get("team_pool_pattern", "*.txt"), seed=seed
     )
+
+
+def _build_knowledge_base(config: dict) -> Optional[PokemonKnowledgeBase]:
+    """Returns a PokemonKnowledgeBase pointed at config["knowledge_base_path"],
+    or None if that key isn't set (the feature is simply off). Unlike
+    _build_team, this is not cached/deduplicated across calls -- callers
+    that need ONE shared instance across multiple trainer builds (e.g.
+    training/curriculum_runner.py across stages) should build it once
+    and pass it in via config, or construct it themselves and bypass
+    this helper; PokemonKnowledgeBase.__init__ itself reads whatever is
+    already on disk at that path, so multiple instances pointed at the
+    same file stay consistent as long as saves don't race."""
+    path = config.get("knowledge_base_path")
+    if not path:
+        return None
+    return PokemonKnowledgeBase(path=path)
 
 
 def build_trainer(
@@ -73,6 +99,13 @@ def build_trainer(
     from that same team pool instead of poke-env's per-battle random
     team generation, which only exists for random-battle formats.
 
+    Also reads config["knowledge_base_path"] (see
+    knowledge/pokemon_knowledge.py): if set, one shared
+    PokemonKnowledgeBase is built and threaded into both the env(s)
+    this trainer opens and the trainer itself, so observations reflect
+    accumulated cross-battle knowledge and every finished battle keeps
+    growing it.
+
     `init_checkpoint`, if given, warm-starts the built trainer's
     network from that checkpoint's weights instead of a fresh random
     initialization -- training/curriculum_runner.py passes the
@@ -96,6 +129,7 @@ def build_trainer(
     training_config = TrainingConfig(**config["training"])
     self_play_cfg = config.get("self_play") or {}
     team = _build_team(config, seed=training_config.seed)
+    knowledge_base = _build_knowledge_base(config)
 
     if not self_play_cfg.get("enabled", False):
         opponent = make_opponent(stage, team=team)
@@ -105,6 +139,7 @@ def build_trainer(
             reward_config=reward_config,
             local=True,
             team=team,
+            knowledge_base=knowledge_base,
         )
         return Trainer(
             env=env,
@@ -113,6 +148,7 @@ def build_trainer(
             run_dir=run_dir,
             curriculum_stage_name=stage.name,
             init_checkpoint=init_checkpoint,
+            knowledge_base=knowledge_base,
         )
 
     mode = self_play_cfg.get("mode", "pooled")
@@ -137,6 +173,7 @@ def build_trainer(
             eval_battles=self_play_cfg.get("eval_battles", 20),
             team=team,
             init_checkpoint=init_checkpoint,
+            knowledge_base=knowledge_base,
         )
 
     if mode == "mirror":
@@ -147,6 +184,7 @@ def build_trainer(
             battle_format=stage.battle_format,
             team=team,
             init_checkpoint=init_checkpoint,
+            knowledge_base=knowledge_base,
         )
 
     raise ValueError(f"Unknown self_play.mode: {mode!r}; expected 'pooled' or 'mirror'")
