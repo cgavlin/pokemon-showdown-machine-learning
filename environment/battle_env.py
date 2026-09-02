@@ -6,6 +6,7 @@ Showdown server -- local by default, never the public ladder) and adds:
   - our own state encoding (environment/state.py)
   - our own action validation + penalty handling (environment/actions.py)
   - our own reward shaping (environment/rewards.py)
+  - optional cross-battle Pokemon knowledge (knowledge/pokemon_knowledge.py)
 
 so the rest of the codebase (agents/training/evaluation) never has to
 know it's ultimately built on poke-env, and could be swapped onto a
@@ -17,7 +18,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import gymnasium as gym
 import numpy as np
@@ -29,6 +30,9 @@ from poke_env.ps_client import AccountConfiguration, ServerConfiguration
 from environment.actions import INVALID_ACTION_PENALTY, as_poke_env_action, sanitize_action
 from environment.rewards import BattleRewardState, RewardConfig, compute_reward
 from environment.state import encode_battle, observation_size
+
+if TYPE_CHECKING:
+    from knowledge.pokemon_knowledge import PokemonKnowledgeBase
 
 logger = logging.getLogger(__name__)
 
@@ -81,9 +85,15 @@ class EncodedSinglesEnv(SinglesEnv):
     starting with `_` is exactly the bug that caused that failure.
     """
 
-    def __init__(self, reward_config: RewardConfig, **kwargs):
+    def __init__(
+        self,
+        reward_config: RewardConfig,
+        knowledge_base: Optional["PokemonKnowledgeBase"] = None,
+        **kwargs,
+    ):
         super().__init__(**kwargs)
         self._reward_config = reward_config
+        self._knowledge_base = knowledge_base
         self._reward_states: dict[int, BattleRewardState] = {}
         self.observation_spaces = {
             agent: Box(low=-10.0, high=10.0, shape=(observation_size(),), dtype=np.float32)
@@ -91,7 +101,7 @@ class EncodedSinglesEnv(SinglesEnv):
         }
 
     def embed_battle(self, battle):
-        return encode_battle(battle)
+        return encode_battle(battle, knowledge_base=self._knowledge_base)
 
     def calc_reward(self, battle) -> float:
         # battle.battle_tag is the SAME string for both sides of a battle
@@ -127,6 +137,13 @@ class ShowdownBattleEnv(gym.Env):
     consequence -- they incur INVALID_ACTION_PENALTY on top of whatever
     (well-defined) fallback action actually gets sent, and the event is
     logged so policy bugs are detectable.
+
+    `knowledge_base`, if given, is exposed as `self.knowledge_base` so
+    a trainer can call `.observe_battle(...)` / `.save()` on it after
+    each episode, AND is threaded into the underlying encoder so every
+    observation this env produces already reflects whatever that
+    knowledge base currently knows (see environment/state.py and
+    knowledge/pokemon_knowledge.py).
     """
 
     metadata = {"render_modes": []}
@@ -139,12 +156,15 @@ class ShowdownBattleEnv(gym.Env):
         server_configuration: ServerConfiguration = LOCAL_SERVER_CONFIGURATION,
         account_configuration: Optional[AccountConfiguration] = None,
         team: Optional[str] = None,
+        knowledge_base: Optional["PokemonKnowledgeBase"] = None,
     ):
         super().__init__()
         self.reward_config = reward_config or RewardConfig()
+        self.knowledge_base = knowledge_base
 
         self._underlying = EncodedSinglesEnv(
             reward_config=self.reward_config,
+            knowledge_base=self.knowledge_base,
             battle_format=battle_format,
             server_configuration=server_configuration,
             account_configuration1=account_configuration
@@ -219,6 +239,7 @@ def make_env(
     reward_config: Optional[RewardConfig] = None,
     local: bool = True,
     team: Optional[str] = None,
+    knowledge_base: Optional["PokemonKnowledgeBase"] = None,
 ) -> ShowdownBattleEnv:
     """
     Factory used by training/evaluation scripts. `local=True` (the
@@ -232,4 +253,5 @@ def make_env(
         reward_config=reward_config,
         server_configuration=server_config or LOCAL_SERVER_CONFIGURATION,
         team=team,
+        knowledge_base=knowledge_base,
     )

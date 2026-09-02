@@ -13,6 +13,7 @@ Used by:
 from __future__ import annotations
 
 import re
+from typing import TYPE_CHECKING, Optional
 
 import numpy as np
 from poke_env.environment.singles_env import SinglesEnv
@@ -21,6 +22,9 @@ from poke_env.player import Player
 from agents.inference import TrainedAgent
 from environment.actions import as_poke_env_action
 from environment.state import encode_battle
+
+if TYPE_CHECKING:
+    from knowledge.pokemon_knowledge import PokemonKnowledgeBase
 
 
 def _gen_from_format(battle_format: str) -> int:
@@ -33,16 +37,32 @@ def _gen_from_format(battle_format: str) -> int:
 class CheckpointPlayer(Player):
     """A poke-env Player whose moves come from a trained DQN checkpoint
     instead of scripted logic. The checkpoint is frozen -- this player
-    never learns or updates weights during battles."""
+    never learns or updates weights during battles.
 
-    def __init__(self, checkpoint_path: str, device: str = "cpu", **kwargs):
+    `knowledge_base`, if given, is threaded into encode_battle() so
+    this player's observations match what its underlying network
+    actually expects/was trained on -- see environment/state.py and
+    knowledge/pokemon_knowledge.py. Passing None still produces a
+    correctly-SHAPED observation (zero-filled knowledge block), so an
+    older checkpoint_player call site that doesn't know about this
+    parameter keeps working, just without the learned signal.
+    """
+
+    def __init__(
+        self,
+        checkpoint_path: str,
+        device: str = "cpu",
+        knowledge_base: Optional["PokemonKnowledgeBase"] = None,
+        **kwargs,
+    ):
         super().__init__(**kwargs)
         gen = _gen_from_format(kwargs.get("battle_format", "gen9randombattle"))
         n_actions = SinglesEnv.get_action_space_size(gen)
         self._agent = TrainedAgent(checkpoint_path, n_actions=n_actions, device=device)
+        self._knowledge_base = knowledge_base
 
     def choose_move(self, battle):
-        obs = encode_battle(battle)
+        obs = encode_battle(battle, knowledge_base=self._knowledge_base)
         mask = np.array(SinglesEnv.get_action_mask(battle), dtype=np.int64)
         action_index = self._agent.act(obs, mask)
 
