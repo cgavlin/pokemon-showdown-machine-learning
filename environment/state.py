@@ -11,6 +11,15 @@ Design principle:
   - Derived information: values legitimately computable from known state
     (e.g. type-effectiveness of a known move against a known type) are
     fine to include.
+  - Learned information: knowledge/pokemon_knowledge.py's
+    PokemonKnowledgeBase accumulates move/ability/item usage patterns
+    for each species ACROSS MANY PAST BATTLES -- this is not "unknown
+    information leaking in" (nothing about THIS battle's hidden state
+    is exposed), it's the same kind of prior a human player builds up
+    from experience with the metagame. Only applied to the OPPONENT
+    team block: our own team's moves are already fully known from the
+    battle object directly, so a historical estimate would only ever
+    be redundant there.
 
 poke-env's `AbstractBattle` already enforces the known/unknown boundary
 for us: `opponent_team` and `opponent_active_pokemon` only ever contain
@@ -22,7 +31,17 @@ testing that wouldn't exist in a real battle.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Optional
+
 import numpy as np
+
+if TYPE_CHECKING:
+    # Type-hint only -- NOT imported at runtime. knowledge/pokemon_knowledge.py
+    # itself imports POKEMON_TYPES from this module, so a real top-level
+    # import here would be circular. encode_battle() only ever calls
+    # `.observation_features(species)` on whatever's passed in, so any
+    # duck-typed object with that method works regardless.
+    from knowledge.pokemon_knowledge import PokemonKnowledgeBase
 
 # A fixed vocabulary of types keeps the observation vector a stable shape
 # across battles/generations we care about (gen 9).
@@ -40,6 +59,13 @@ MAX_TEAM_SIZE = 6
 # One-pokemon feature block size, used for both own and opponent mons.
 # [hp_frac, fainted, *status_onehot(7), *types_onehot(18)*2 (type1/type2)]
 _POKEMON_BLOCK = 1 + 1 + len(STATUS_CONDITIONS) + 2 * len(POKEMON_TYPES)
+
+# Knowledge-base-derived block appended ONLY to opponent Pokemon slots
+# (see module docstring): [move_type_coverage(18), confidence(1)] --
+# always present and zero-filled when no knowledge_base is given or the
+# species has never been observed before, so the overall observation
+# shape never depends on whether a knowledge base is in use.
+_KNOWLEDGE_BLOCK = len(POKEMON_TYPES) + 1
 
 # Per-move feature block: [base_power_norm, accuracy_norm, pp_frac,
 # *type_onehot(18), effectiveness_vs_opponent]
@@ -81,6 +107,27 @@ def _pokemon_features(pokemon) -> np.ndarray:
     return np.concatenate(
         [[hp_frac, fainted], status_vec, type1_vec, type2_vec]
     ).astype(np.float32)
+
+
+def _opponent_knowledge_features(pokemon, knowledge_base: Optional["PokemonKnowledgeBase"]) -> np.ndarray:
+    """
+    Historical move-type coverage + confidence for a revealed opponent
+    Pokemon, from PokemonKnowledgeBase.observation_features(). Zero-
+    filled whenever there's nothing to say: no Pokemon in this slot, no
+    knowledge base configured, or a species this knowledge base has
+    never seen before (a brand-new knowledge base starts every species
+    at all-zero, and confidence only rises as more battles are
+    recorded -- see knowledge/pokemon_knowledge.py).
+    """
+    if pokemon is None or knowledge_base is None:
+        return np.zeros(_KNOWLEDGE_BLOCK, dtype=np.float32)
+
+    species = getattr(pokemon, "species", None)
+    if not species:
+        return np.zeros(_KNOWLEDGE_BLOCK, dtype=np.float32)
+
+    coverage, confidence = knowledge_base.observation_features(species)
+    return np.concatenate([coverage, [confidence]]).astype(np.float32)
 
 
 def _move_features(move, opponent_pokemon) -> np.ndarray:
@@ -131,19 +178,27 @@ def _field_features(battle) -> np.ndarray:
 
 def observation_size() -> int:
     team_block = MAX_TEAM_SIZE * _POKEMON_BLOCK  # own team
-    opp_block = MAX_TEAM_SIZE * _POKEMON_BLOCK  # opponent team (revealed subset)
+    opp_block = MAX_TEAM_SIZE * (_POKEMON_BLOCK + _KNOWLEDGE_BLOCK)  # opponent team + learned knowledge
     move_block = MAX_MOVES * _MOVE_BLOCK
     field_block = len(WEATHERS) + 2 * len(FIELD_EFFECTS) + 1
     return team_block + opp_block + move_block + field_block
 
 
-def encode_battle(battle) -> np.ndarray:
+def encode_battle(battle, knowledge_base: Optional["PokemonKnowledgeBase"] = None) -> np.ndarray:
     """
     Encode a poke-env `AbstractBattle` into a fixed-length float32 vector.
 
     Only reads attributes that poke-env populates from the actual Showdown
     protocol stream, so hidden/unrevealed opponent information is never
     included by construction.
+
+    `knowledge_base`, if given, enriches each revealed OPPONENT Pokemon's
+    block with that species' historically-learned move-type coverage
+    (see knowledge/pokemon_knowledge.py). Passing None (the default)
+    zero-fills that portion of the vector instead -- the output SHAPE
+    is identical either way, only the values differ, so callers that
+    don't have a knowledge base handy (e.g. existing tests) still get a
+    correctly-shaped observation.
     """
     own_team = list(battle.team.values())
     own_team_feats = [
@@ -152,10 +207,12 @@ def encode_battle(battle) -> np.ndarray:
     ]
 
     opp_team = list(battle.opponent_team.values())
-    opp_team_feats = [
-        _pokemon_features(opp_team[i]) if i < len(opp_team) else np.zeros(_POKEMON_BLOCK, dtype=np.float32)
-        for i in range(MAX_TEAM_SIZE)
-    ]
+    opp_team_feats = []
+    for i in range(MAX_TEAM_SIZE):
+        opp_pokemon = opp_team[i] if i < len(opp_team) else None
+        base = _pokemon_features(opp_pokemon)
+        knowledge = _opponent_knowledge_features(opp_pokemon, knowledge_base)
+        opp_team_feats.append(np.concatenate([base, knowledge]).astype(np.float32))
 
     active = battle.active_pokemon
     opp_active = battle.opponent_active_pokemon
