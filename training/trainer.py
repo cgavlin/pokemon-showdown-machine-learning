@@ -16,7 +16,7 @@ import time
 import uuid
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import numpy as np
 import torch
@@ -28,9 +28,17 @@ from environment.rewards import RewardConfig
 from environment.state import observation_size
 from training.dqn_update import double_dqn_update
 
+if TYPE_CHECKING:
+    from knowledge.pokemon_knowledge import PokemonKnowledgeBase
+
 logger = logging.getLogger(__name__)
 
-ENVIRONMENT_VERSION = "0.1.0"  # bump whenever observation/action/reward shape changes
+# Bumped 0.1.0 -> 0.2.0: environment/state.py's observation now includes
+# a knowledge-base-derived block per opponent Pokemon slot (see
+# knowledge/pokemon_knowledge.py), changing observation_size(). Any
+# checkpoint saved under 0.1.0 has a mismatched input-layer shape and
+# will fail to load into a fresh network built against this version.
+ENVIRONMENT_VERSION = "0.2.0"  # bump whenever observation/action/reward shape changes
 
 
 @dataclass
@@ -67,6 +75,7 @@ class Trainer:
         curriculum_stage_name: str,
         team_pool_description: str = "default random team pool",
         init_checkpoint: Optional[str | Path] = None,
+        knowledge_base: Optional["PokemonKnowledgeBase"] = None,
     ):
         self.env = env
         self.cfg = training_config
@@ -77,6 +86,12 @@ class Trainer:
         self.curriculum_stage_name = curriculum_stage_name
         self.team_pool_description = team_pool_description
         self.init_checkpoint = init_checkpoint
+        # Not owned/constructed here -- trainer_factory.build_trainer
+        # builds one shared instance and passes it both to make_env()
+        # (so observations already reflect it) and here (so this
+        # trainer can grow it as battles finish). May be None, meaning
+        # the knowledge feature is simply off for this run.
+        self.knowledge_base = knowledge_base
 
         self.device = torch.device(self.cfg.device)
         obs_size = observation_size()
@@ -119,6 +134,11 @@ class Trainer:
             "opponent": type(self.env.opponent).__name__,
             "battle_format": getattr(self.env.opponent, "format", "unknown"),
             "init_checkpoint": str(self.init_checkpoint) if self.init_checkpoint else None,
+            "knowledge_base_path": (
+                str(self.knowledge_base.path)
+                if self.knowledge_base is not None and self.knowledge_base.path is not None
+                else None
+            ),
             "seed": self.cfg.seed,
             "created_at": time.time(),
         }
@@ -151,6 +171,20 @@ class Trainer:
         )
         return checkpoint_path
 
+    def _record_finished_battle_in_knowledge_base(self) -> None:
+        """Called once a battle finishes -- see the `if done:` block in
+        train(). Reads the just-finished battle straight off the env
+        (same access pattern evaluation/benchmarks.py already uses:
+        `env._underlying.battle1` is OUR agent's perspective) and folds
+        it into the knowledge base, if one is configured. A no-op when
+        knowledge_base is None, so this is always safe to call."""
+        if self.knowledge_base is None:
+            return
+        underlying = getattr(self.env, "_underlying", None)
+        battle = getattr(underlying, "battle1", None) if underlying is not None else None
+        if battle is not None:
+            self.knowledge_base.observe_battle(battle)
+
     def train(self) -> Path:
         obs, info = self.env.reset(seed=self.cfg.seed)
         episode_reward = 0.0
@@ -176,6 +210,7 @@ class Trainer:
 
             if done:
                 episode_count += 1
+                self._record_finished_battle_in_knowledge_base()
                 self._log_metrics(
                     step=step,
                     event="episode_end",
@@ -199,7 +234,15 @@ class Trainer:
                 self._log_metrics(step=step, event="train_progress", avg_loss=avg_loss)
                 losses = []
                 self._save_checkpoint(step)
+                # Same cadence as checkpointing: persist the knowledge
+                # base's accumulated learning to disk periodically,
+                # not every single battle (that would mean an I/O
+                # round-trip every few seconds during training).
+                if self.knowledge_base is not None and self.knowledge_base.path is not None:
+                    self.knowledge_base.save()
 
         final_checkpoint = self._save_checkpoint(self.cfg.total_steps)
+        if self.knowledge_base is not None and self.knowledge_base.path is not None:
+            self.knowledge_base.save()
         logger.info("Training complete. Final checkpoint: %s", final_checkpoint)
         return final_checkpoint
